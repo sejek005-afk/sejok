@@ -18,6 +18,7 @@ svg.i { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-widt
 /* سربرگ */
 #hdr { position: fixed; top: 0; left: 0; right: 0; height: 58px; background: var(--graphite); color: #fff; display: flex; align-items: center; gap: 4px; padding: 0 8px 0 8px; z-index: 10; border-bottom: 3px solid var(--yellow); }
 #hdr h1 { font-family: var(--display); font-weight: 400; font-size: 21px; margin: 0 6px; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: 0; }
+#hdr h1 .hlogo { height: 1.15em; width: auto; vertical-align: middle; margin-left: 8px; position: relative; top: -3px; }
 #hdr button { background: none; border: 0; color: #fff; width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; }
 #hdr button:active { background: rgba(255,255,255,.12); }
 
