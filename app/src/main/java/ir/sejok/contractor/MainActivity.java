@@ -231,7 +231,50 @@ public class MainActivity extends Activity {
         web.evaluateJavascript("window.onPdfDone && window.onPdfDone('" + r + "')", null);
     }
 
+    private void jsToast(String msg) {
+        web.evaluateJavascript("window.toast && toast('" + msg + "')", null);
+    }
+
     private class Bridge {
+        @JavascriptInterface
+        public void openUrl(final String url) {
+            runOnUiThread(() -> {
+                try {
+                    Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                    startActivity(i);
+                } catch (Exception e) {
+                    jsToast("برنامه‌ای برای باز کردن پیدا نشد");
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void sendSms(final String phone, final String text) {
+            runOnUiThread(() -> {
+                try {
+                    Intent i = new Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + (phone == null ? "" : phone)));
+                    i.putExtra("sms_body", text);
+                    startActivity(i);
+                } catch (Exception e) {
+                    try {
+                        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse("sms:" + (phone == null ? "" : phone)));
+                        i.putExtra("sms_body", text);
+                        startActivity(i);
+                    } catch (Exception e2) { jsToast("برنامه پیامک پیدا نشد"); }
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void shareText(final String text) {
+            runOnUiThread(() -> {
+                Intent i = new Intent(Intent.ACTION_SEND);
+                i.setType("text/plain");
+                i.putExtra(Intent.EXTRA_TEXT, text);
+                try { startActivity(Intent.createChooser(i, "ارسال")); } catch (Exception ignored) {}
+            });
+        }
+
         @JavascriptInterface
         public void syncAlarms(String json) {
             Alarms.sync(getApplicationContext(), json);

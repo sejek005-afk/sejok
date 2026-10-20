@@ -34,6 +34,13 @@ function syncAlarms() {
       id: n.id, t: noteTime(n), title: n.title, tag: n.tag || 'normal',
       text: [linkName(n), n.text].filter(Boolean).join(' — '),
     })).filter(a => a.t && a.t > now);
+    for (const c of DB.cheques) {
+      const t = chequeTime(c);
+      if (!t || t <= now) continue;
+      list.push({ id: c.id, t, tag: c.dir === 'out' ? 'urgent' : 'important',
+        title: `سررسید چک ${c.dir === 'out' ? 'پرداختی' : 'دریافتی'}: ${Math.round(c.amount).toLocaleString('fa-IR')} ${c.cur || 'تومان'}`,
+        text: [c.party, c.no ? 'شماره ' + c.no : '', c.bank, (c.before ? `سررسید: ${showDate(c.due)}` : '')].filter(Boolean).join(' — ') });
+    }
     try { Android.syncAlarms(JSON.stringify(list)); } catch (e) { }
   }, 250);
 }
@@ -111,17 +118,23 @@ function sortNotes(list) {
   });
 }
 function overdueCount() {
-  const now = Date.now();
-  return DB.notes.filter(n => !n.done && n.alarm && noteTime(n) && noteTime(n) <= now).length;
+  const now = Date.now(), t0 = todayJ();
+  return DB.notes.filter(n => !n.done && n.alarm && noteTime(n) && noteTime(n) <= now).length
+    + DB.cheques.filter(c => c.status === 'pending' && c.due && c.due <= t0).length;
 }
 window.NAV_BADGE = Object.assign(window.NAV_BADGE || {}, { notes: overdueCount });
 
+function modeTabs(m) {
+  const due = DB.cheques.filter(c => c.status === 'pending' && c.due && c.due <= todayJ()).length;
+  return `<div class="tabs">${[['notes', 'یادداشت‌ها'], ['cheques', 'چک‌ها' + (due ? ` (${faDigits(due)})` : '')]].map(x => `<button class="${m === x[0] ? 'on' : ''}" onclick="setSub('m','${x[0]}')">${x[1]}</button>`).join('')}</div>`;
+}
 V.notes = r => {
+  if (r.m === 'cheques') return chequesView(r);
   const f = r.f || 'active', tg = r.t || '';
   let list = DB.notes.filter(n => f === 'done' ? n.done : !n.done);
   if (tg) list = list.filter(n => (n.tag || 'normal') === tg);
   list = f === 'done' ? list.sort((a, b) => (b.created || 0) - (a.created || 0)) : sortNotes(list);
-  let h = '';
+  let h = modeTabs('notes');
   const ns = notifStatus();
   if (ns === 'off') h += `<div class="warn">${ic('bell')}<div style="flex:1">اعلان‌های برنامه خاموش است؛ یادآورها زنگ نمی‌خورند.</div><button class="btn sm dark" onclick="askNotif()">روشن کردن</button></div>`;
   h += `<div class="chips">${[['active', 'فعال'], ['done', 'انجام‌شده']].map(x => `<button class="${f === x[0] ? 'on' : ''}" onclick="setSub('f','${x[0]}')">${x[1]}</button>`).join('')}
@@ -145,3 +158,93 @@ V.notes = r => {
 // در شروع برنامه زنگ‌ها همگام شوند
 syncAlarms();
 render();
+
+// ===================== چک‌ها =====================
+const CH_ST = { pending: ['در انتظار', 'y'], cleared: ['وصول / پاس شد', 'ok'], bounced: ['برگشتی', 'bad'] };
+function chequeTime(c) {
+  if (!c.alarm || c.status !== 'pending' || !c.due) return null;
+  const g = J.d2g(jToJdn(c.due) - (c.before || 0));
+  const [h, m] = (c.time || '09:00').split(':').map(Number);
+  return new Date(g.gy, g.gm - 1, g.gd, h || 0, m || 0, 0).getTime();
+}
+function chequeForm(id, preset) {
+  const c = id ? DB.cheques.find(x => x.id === id) : null;
+  const ps = preset || {};
+  const v = k => c ? c[k] : ps[k];
+  openForm(c ? 'ویرایش چک' : 'ثبت چک', [
+    { k: 'dir', label: 'نوع چک', type: 'select', opts: [['in', 'دریافتی (از کارفرما / مشتری)'], ['out', 'پرداختی (به فروشنده / دیگران)']], value: v('dir') || 'in' },
+    { k: 'amount', label: 'مبلغ (تومان)', type: 'money', req: true, value: v('amount') },
+    { k: 'due', label: 'تاریخ سررسید', type: 'date', value: v('due') },
+    { k: 'party', label: 'طرف حساب (صادرکننده / گیرنده)', value: v('party'), list: [...new Set(DB.cheques.map(x => x.party).filter(Boolean))] },
+    { k: 'no', label: 'شماره چک / صیادی', value: v('no'), ltr: true },
+    { k: 'bank', label: 'بانک', value: v('bank') },
+    { k: 'status', label: 'وضعیت', type: 'select', opts: Object.entries(CH_ST).map(([k, x]) => [k, x[0]]), value: v('status') || 'pending' },
+    { k: 'alarm', label: 'یادآور سررسید', type: 'select', opts: [['1', 'روشن'], ['0', 'خاموش']], value: c ? (c.alarm ? '1' : '0') : '1' },
+    { k: 'before', label: 'زمان یادآوری', type: 'select', opts: [['0', 'روز سررسید'], ['1', 'یک روز قبل'], ['2', 'دو روز قبل'], ['3', 'سه روز قبل'], ['7', 'یک هفته قبل']], value: String(c ? c.before || 0 : 0), when: o => o.alarm === '1' },
+    { k: 'time', label: 'ساعت یادآوری', type: 'time', value: v('time') || '09:00', when: o => o.alarm === '1' },
+    { k: 'note', label: 'توضیحات', type: 'textarea', value: v('note') },
+  ], o => {
+    const rec = { dir: o.dir, amount: o.amount, due: o.due, party: o.party, no: toEn(o.no || ''), bank: o.bank, status: o.status, alarm: o.alarm === '1', before: +o.before || 0, time: o.time || '09:00', note: o.note };
+    if (c) {
+      Object.assign(c, rec);
+      if (c.invoiceId && c.payId) { const inv = getInv(c.invoiceId); const p = inv && inv.pays.find(x => x.id === c.payId); if (p) { p.amount = rec.amount; } }
+    } else DB.cheques.push(Object.assign({ id: nid(), created: Date.now() }, rec));
+    const t = chequeTime(Object.assign({}, c || {}, rec));
+    if (rec.status === 'pending' && rec.alarm) {
+      if (t && t > Date.now()) { toast('یادآور سررسید تنظیم شد'); if (notifStatus() === 'off') askNotif(); }
+      else toast('زمان یادآوری گذشته است');
+    }
+  }, c ? () => {
+    DB.cheques = DB.cheques.filter(x => x !== c);
+    if (c.invoiceId) { const inv = getInv(c.invoiceId); if (inv) inv.pays = inv.pays.filter(p => p.id !== c.payId); }
+  } : null);
+}
+function chequeStatus(id, st) {
+  const c = DB.cheques.find(x => x.id === id); c.status = st; save(); render();
+  toast(st === 'cleared' ? 'وصول شد' : st === 'bounced' ? 'برگشتی ثبت شد' : 'در انتظار');
+}
+function chequeCard(c) {
+  const t0 = todayJ();
+  const late = c.status === 'pending' && c.due && c.due < t0;
+  const today = c.status === 'pending' && c.due === t0;
+  const st = CH_ST[c.status] || CH_ST.pending;
+  const dleft = c.due ? jToJdn(c.due) - todayJdn() : null;
+  const when = c.status !== 'pending' ? '' : today ? ' (امروز)' : late ? ` (${faDigits(-dleft)} روز گذشته)` : dleft != null ? ` (${faDigits(dleft)} روز دیگر)` : '';
+  return `<div class="note ${c.dir === 'out' ? 'urgent' : 'important'} ${c.status !== 'pending' ? 'done' : ''}">
+    <span class="dot ${c.dir === 'out' ? 'out' : 'in'}" style="margin-top:2px">${ic(c.dir === 'out' ? 'out' : 'in')}</span>
+    <div class="body" onclick="chequeForm(${c.id})"><div class="ct"><span class="nt" style="flex:1;text-decoration:none">${Math.round(c.amount).toLocaleString('fa-IR')} <span style="font-size:12px;font-weight:400">${c.cur || 'تومان'}</span></span><span class="badge ${st[1]}">${st[0]}</span></div>
+    <div class="tx2">${c.dir === 'out' ? 'پرداختی به' : 'دریافتی از'} ${esc(c.party || '—')}${c.no ? ' · شماره ' + esc(faDigits(c.no)) : ''}${c.bank ? ' · ' + esc(c.bank) : ''}</div>
+    <div class="meta"><span class="${late || today ? 'late' : ''}">${ic(c.alarm && c.status === 'pending' ? 'bell' : 'cal')}سررسید ${showDate(c.due)}${when}</span>
+    ${c.invoiceId && getInv(c.invoiceId) ? `<span class="chip" onclick="event.stopPropagation();go('invoice',{id:${c.invoiceId}})">${ic('receipt')}${kindLabel(getInv(c.invoiceId))} ${faDigits(getInv(c.invoiceId).no)}</span>` : ''}</div>
+    ${c.status === 'pending' ? `<div class="row" style="margin-top:8px"><button class="btn sm" style="flex:1;background:var(--ok-soft);color:var(--ok)" onclick="event.stopPropagation();chequeStatus(${c.id},'cleared')">${ic('check')} ${c.dir === 'out' ? 'پاس شد' : 'وصول شد'}</button><button class="btn sm danger" style="flex:1" onclick="event.stopPropagation();chequeStatus(${c.id},'bounced')">برگشت خورد</button></div>` : ''}</div></div>`;
+}
+function chequesView(r) {
+  const f = r.cf || 'pending';
+  const t0 = todayJ(), wk = jdnToJ(todayJdn() + 7);
+  const pend = DB.cheques.filter(c => c.status === 'pending');
+  const inSum = sum(pend.filter(c => c.dir === 'in'), c => c.amount), outSum = sum(pend.filter(c => c.dir === 'out'), c => c.amount);
+  let h = modeTabs('cheques');
+  const ns = notifStatus();
+  if (ns === 'off') h += `<div class="warn">${ic('bell')}<div style="flex:1">اعلان‌ها خاموش است؛ یادآور سررسید زنگ نمی‌خورد.</div><button class="btn sm dark" onclick="askNotif()">روشن کردن</button></div>`;
+  h += `<div class="card"><div class="row"><div style="flex:1"><div class="mut">چک‌های دریافتنی</div><b class="pos">${Math.round(inSum).toLocaleString('fa-IR')}</b></div>
+    <div style="flex:1"><div class="mut">چک‌های پرداختنی</div><b class="neg">${Math.round(outSum).toLocaleString('fa-IR')}</b></div></div><div class="mut" style="margin-top:4px">مبالغ به تومان · فقط چک‌های در انتظار</div></div>`;
+  h += `<div class="chips">${[['pending', 'در انتظار'], ['in', 'دریافتی'], ['out', 'پرداختی'], ['done', 'وصول‌شده'], ['bounced', 'برگشتی']].map(x => `<button class="${f === x[0] ? 'on' : ''}" onclick="setSub('cf','${x[0]}')">${x[1]}</button>`).join('')}</div>`;
+  let list = DB.cheques.slice();
+  if (f === 'pending') list = list.filter(c => c.status === 'pending');
+  if (f === 'in' || f === 'out') list = list.filter(c => c.dir === f);
+  if (f === 'done') list = list.filter(c => c.status === 'cleared');
+  if (f === 'bounced') list = list.filter(c => c.status === 'bounced');
+  list.sort((a, b) => (a.due || '').localeCompare(b.due || ''));
+  if (!list.length) h += empty('چک‌های دریافتی و پرداختی را با دکمه + ثبت کنید تا روز سررسید یادآوری شود. چک‌هایی که در فاکتور دریافت کنید هم اینجا می‌آیند.', 'receipt', 'چکی نیست');
+  else if (f === 'pending') {
+    const groups = [['سررسید گذشته', c => c.due < t0], ['امروز', c => c.due === t0], ['تا یک هفته آینده', c => c.due <= wk], ['بعداً', () => true]];
+    const used = new Set();
+    for (const [title, fn] of groups) {
+      const g = list.filter(c => !used.has(c) && fn(c)); if (!g.length) continue;
+      g.forEach(c => used.add(c));
+      h += `<div class="sec">${title} <span class="mut" style="font-weight:400">${faDigits(g.length)}</span></div>` + g.map(chequeCard).join('');
+    }
+  } else h += list.map(chequeCard).join('');
+  return { title: 'یادداشت‌ها', html: h, fab: 'chequeForm()' };
+}
+syncAlarms();

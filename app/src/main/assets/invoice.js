@@ -23,10 +23,18 @@ function invCalc(inv) {
   const rt = +S('roundTo') || 0;
   const round = rt > 0 ? ((afterDisc % rt) + rt) % rt : 0;
   const payable = afterDisc - round;
-  const paid = (inv.cash || 0) + (inv.cheque || 0);
+  let cashP = 0, chqP = 0;
+  for (const p of inv.pays || []) {
+    if (p.method === 'cheque') {
+      const ch = p.chequeId && DB.cheques.find(x => x.id === p.chequeId);
+      if (ch && ch.status === 'bounced') continue;
+      chqP += p.amount || 0;
+    } else cashP += p.amount || 0;
+  }
+  const paid = cashP + chqP;
   const remain = payable - paid;
   const status = inv.kind === 'pre' ? 'pre' : (payable > 0 && remain <= 0 ? 'paid' : paid > 0 ? 'part' : 'open');
-  return { sub, idisc, tax, total, round, payable, paid, remain, status };
+  return { sub, idisc, tax, total, round, payable, paid, cashP, chqP, remain, status };
 }
 const STATUS = { paid: ['تسویه شده', 'ok'], part: ['پرداخت جزئی', 'y'], open: ['تسویه نشده', 'bad'], pre: ['پیش فاکتور', ''] };
 function custBalance(inv) {
@@ -42,9 +50,10 @@ function customers() {
 }
 
 // ---------- فرم‌ها ----------
-function newInvoice(kind) {
+function newInvoice(kind, projectId) {
   const no = +S('nextNo') || 1;
-  const inv = { id: nid(), no, kind: kind || 'inv', title: S('defTitle') || '', date: todayJ(), due: '', customer: { name: '', address: '', phone: '' }, projectId: null, items: [], discount: 0, taxOn: false, taxRate: +S('taxRate') || 0, cash: 0, cheque: 0, chequeNote: '', note: '' };
+  const inv = { id: nid(), no, kind: kind || 'inv', title: S('defTitle') || '', date: todayJ(), due: '', customer: { name: '', address: '', phone: '' }, projectId: null, items: [], discount: 0, taxOn: false, taxRate: +S('taxRate') || 0, pays: [], note: '' };
+  if (projectId && proj(projectId)) { inv.projectId = +projectId; inv.customer.address = proj(projectId).address || ''; }
   DB.invoices.push(inv);
   DB.inv.nextNo = no + 1;
   save();
@@ -102,22 +111,79 @@ function itemFromProject(id) {
   ], o => {
     const p = proj(o.p); if (!p) return false;
     const qty = o.basis === 'area' ? (p.area || 0) : agg(ALL, new Set([p.id])).meters;
-    inv.items.push({ id: nid(), title: `${(cat(p.catId) || {}).name || ''} — ${p.name}`.replace(/^ — /, ''), desc: p.address || '', qty: Math.round(qty * 100) / 100, unit: 'متر مربع', price: rate(p), disc: 0 });
+    inv.items.push({ id: nid(), title: `${(cat(p.catId) || {}).name || ''} — ${p.name}`.replace(/^ — /, ''), desc: p.address || '', qty: Math.round(qty * 100) / 100, unit: 'متر مربع', price: rate(p) * (ccy() === 'ریال' ? 10 : 1), disc: 0 });
     if (!inv.projectId) inv.projectId = p.id;
     if (!inv.customer.address && p.address) inv.customer.address = p.address;
   });
 }
 function payForm(id) {
   const inv = getInv(id);
-  openForm('تخفیف، مالیات و پرداخت', [
+  openForm('تخفیف و مالیات', [
     { k: 'discount', label: `تخفیف فاکتور (${ccy()})`, type: 'money', value: inv.discount },
     { k: 'taxOn', label: 'مالیات', type: 'select', opts: [['0', 'ندارد'], ['1', 'دارد']], value: inv.taxOn ? '1' : '0' },
     { k: 'taxRate', label: 'درصد مالیات', type: 'num', value: inv.taxRate, when: o => o.taxOn === '1' },
-    { k: 'cash', label: `پرداخت نقدی (${ccy()})`, type: 'money', value: inv.cash },
-    { k: 'cheque', label: `پرداخت چکی (${ccy()})`, type: 'money', value: inv.cheque },
-    { k: 'chequeNote', label: 'مشخصات چک (اختیاری)', value: inv.chequeNote, when: o => o.cheque > 0 },
   ], o => { Object.assign(inv, o); inv.taxOn = o.taxOn === '1'; });
 }
+const PAY_M = { cash: 'نقدی', card: 'کارت به کارت / واریز', cheque: 'چک' };
+function invPayForm(id, payId) {
+  const inv = getInv(id); const p = payId ? inv.pays.find(x => x.id === payId) : null;
+  const c = invCalc(inv);
+  const ch = p && p.chequeId ? DB.cheques.find(x => x.id === p.chequeId) : null;
+  openForm(p ? 'ویرایش دریافت' : 'ثبت دریافت از طرف حساب', [
+    { k: 'date', label: 'تاریخ دریافت', type: 'date', value: p && p.date },
+    { k: 'amount', label: `مبلغ (${ccy()})`, type: 'money', req: true, value: p ? p.amount : Math.max(0, c.remain) },
+    { k: 'method', label: 'روش پرداخت', type: 'select', opts: Object.entries(PAY_M), value: p ? p.method : 'cash' },
+    { k: 'due', label: 'تاریخ سررسید چک', type: 'date', value: ch ? ch.due : '', when: o => o.method === 'cheque' },
+    { k: 'chNo', label: 'شماره چک (اختیاری)', value: ch && ch.no, when: o => o.method === 'cheque', ltr: true },
+    { k: 'bank', label: 'بانک (اختیاری)', value: ch && ch.bank, when: o => o.method === 'cheque' },
+    { k: 'note', label: 'توضیحات', value: p && p.note },
+  ], o => {
+    const rec = p || { id: nid() };
+    Object.assign(rec, { date: o.date, amount: o.amount, method: o.method, note: o.note });
+    if (!p) inv.pays.push(rec);
+    let chq = rec.chequeId ? DB.cheques.find(x => x.id === rec.chequeId) : null;
+    if (o.method === 'cheque') {
+      const data = { dir: 'in', cur: ccy(), amount: o.amount, due: o.due, no: toEn(o.chNo || ''), bank: o.bank, party: (inv.customer && inv.customer.name) || '', invoiceId: inv.id, payId: rec.id };
+      if (chq) Object.assign(chq, data);
+      else { chq = Object.assign({ id: nid(), status: 'pending', alarm: true, time: '09:00', before: 0, note: `بابت ${kindLabel(inv)} ${inv.no}`, created: Date.now() }, data); DB.cheques.push(chq); }
+      rec.chequeId = chq.id;
+      return () => toast('چک در بخش «چک‌ها»ی تب یادداشت ثبت شد و روز سررسید یادآوری می‌شود');
+    } else if (chq) { DB.cheques = DB.cheques.filter(x => x !== chq); rec.chequeId = null; }
+  }, p ? () => {
+    inv.pays = inv.pays.filter(x => x !== p);
+    if (p.chequeId) DB.cheques = DB.cheques.filter(x => x.id !== p.chequeId);
+  } : null);
+}
+function payRow(inv, p) {
+  const ch = p.chequeId ? DB.cheques.find(x => x.id === p.chequeId) : null;
+  const st = ch ? (ch.status === 'cleared' ? ' · وصول شد' : ch.status === 'bounced' ? ' · برگشتی' : ` · سررسید ${showDate(ch.due)}`) : '';
+  return `<div class="tx" onclick="invPayForm(${inv.id},${p.id})"><span class="dot ${ch && ch.status === 'bounced' ? 'out' : 'in'}">${ic(p.method === 'cheque' ? 'receipt' : 'in')}</span><div class="d"><div>${PAY_M[p.method] || ''}${p.note ? ' — ' + esc(p.note) : ''}</div><div class="mut">${showDate(p.date)}${st}</div></div>
+    <div class="a ${ch && ch.status === 'bounced' ? 'neg' : 'pos'}" style="${ch && ch.status === 'bounced' ? 'text-decoration:line-through' : ''}">${fm(p.amount)}</div></div>`;
+}
+
+// ---------- حساب پروژه با کارفرما ----------
+function projAccount(p) {
+  const invs = DB.invoices.filter(i => i.projectId === p.id && i.kind !== 'pre');
+  let invoiced = 0, received = 0;
+  for (const i of invs) { const c = invCalc(i); invoiced += c.payable; received += c.paid; }
+  const k = ccy() === 'ریال' ? 10 : 1; // مبالغ پروژه به تومان است
+  const work = agg(ALL, new Set([p.id])).revenue * k;
+  const contract = (p.area || 0) * rate(p) * k;
+  return { invs, invoiced, received, due: invoiced - received, unbilled: Math.max(0, work - invoiced), work, contract };
+}
+function projAccountCard(p) {
+  const a = projAccount(p);
+  const rows = a.invs.slice().sort((x, y) => (y.date || '').localeCompare(x.date || '')).map(i => { const c = invCalc(i); const st = STATUS[c.status];
+    return `<div class="tx" onclick="go('invoice',{id:${i.id}})"><span class="dot" style="background:var(--yellow-soft);color:#8A6400">${ic('receipt')}</span><div class="d"><div>${kindLabel(i)} ${faDigits(i.no)}${i.title ? ' — ' + esc(i.title) : ''}</div><div class="mut">${showDate(i.date)} · <span class="badge ${st[1]}">${st[0]}</span></div></div><div class="a">${fm(c.payable)}</div></div>`; }).join('');
+  return `<div class="card"><div class="ct" style="margin-bottom:4px"><b>حساب با کارفرما</b><button class="btn sm pri" onclick="newInvoice('inv',${p.id})">${ic('plus')} فاکتور</button></div>
+    <div class="kv"><span>ارزش کار انجام‌شده</span><span>${fmc(a.work)}</span></div>
+    <div class="kv"><span>جمع فاکتورها</span><span>${fmc(a.invoiced)}</span></div>
+    <div class="kv"><span>دریافتی از کارفرما</span><span class="pos">${fmc(a.received)}</span></div>
+    <div class="kv total"><span>طلب از کارفرما</span><span>${fmc(Math.max(0, a.due))}</span></div>
+    ${a.unbilled > 0 ? `<div class="mut" style="margin-top:8px">${fmc(a.unbilled)} کار انجام‌شده هنوز فاکتور نشده است.</div>` : ''}
+    ${rows ? `<div style="margin-top:8px">${rows}</div>` : ''}</div>`;
+}
+
 function noteForm(id) {
   const inv = getInv(id);
   openForm('یادداشت زیر فاکتور', [{ k: 'note', label: 'یادداشت (در فاکتور چاپ می‌شود)', type: 'textarea', value: inv.note }], o => { inv.note = o.note; });
@@ -126,7 +192,7 @@ function dupInvoice(id, kind) {
   const src = getInv(id);
   const c = JSON.parse(JSON.stringify(src));
   c.id = nid(); c.no = +S('nextNo') || 1; DB.inv.nextNo = c.no + 1;
-  c.date = todayJ(); c.cash = 0; c.cheque = 0; c.chequeNote = '';
+  c.date = todayJ(); c.pays = [];
   if (kind) c.kind = kind;
   c.items.forEach(it => it.id = nid());
   DB.invoices.push(c); save();
@@ -203,9 +269,10 @@ V.invoices = r => {
   const openSum = sum(list.filter(i => i.kind !== 'pre'), i => Math.max(0, calcs.get(i).remain));
   if (f === 'open') list = list.filter(i => ['open', 'part'].includes(calcs.get(i).status));
   if (f === 'pre') list = list.filter(i => i.kind === 'pre');
+  if (f === 'proj') return invProjView();
   let h = `<div class="card"><div class="hl"><div><div class="mut">مانده فاکتورهای تسویه‌نشده</div><div class="big">${fm(openSum)} <span style="font-size:14px">${ccy()}</span></div></div>
     <button class="btn sm dark" onclick="go('invSettings')">${ic('gear')} تنظیمات</button></div></div>`;
-  h += `<div class="seg" style="margin-bottom:12px;display:flex">${[['all', 'همه'], ['open', 'تسویه‌نشده'], ['pre', 'پیش فاکتورها']].map(x => `<button class="sb ${f === x[0] ? 'p' : ''}" style="flex:1" onclick="setSub('f','${x[0]}')">${x[1]}</button>`).join('')}</div>`;
+  h += `<div class="seg" style="margin-bottom:12px;display:flex">${[['all', 'همه'], ['open', 'تسویه‌نشده'], ['pre', 'پیش فاکتور'], ['proj', 'حساب پروژه‌ها']].map(x => `<button class="sb ${f === x[0] ? 'p' : ''}" style="flex:1" onclick="setSub('f','${x[0]}')">${x[1]}</button>`).join('')}</div>`;
   if (!list.length) h += empty('با دکمه + فاکتور یا پیش فاکتور جدید بسازید و به صورت PDF ذخیره یا ارسال کنید.', 'receipt', 'فاکتوری نیست');
   else h += '<div class="list">' + list.map(i => {
     const c = calcs.get(i); const st = STATUS[c.status];
@@ -215,6 +282,18 @@ V.invoices = r => {
   }).join('') + '</div>';
   return { title: 'فاکتورها', html: h, fab: 'invNewMenu()' };
 };
+function invProjView() {
+  const seg = `<div class="seg" style="margin-bottom:12px;display:flex">${[['all', 'همه'], ['open', 'تسویه‌نشده'], ['pre', 'پیش فاکتور'], ['proj', 'حساب پروژه‌ها']].map(x => `<button class="sb ${x[0] === 'proj' ? 'p' : ''}" style="flex:1" onclick="setSub('f','${x[0]}')">${x[1]}</button>`).join('')}</div>`;
+  const ps = DB.projects.map(p => [p, projAccount(p)]).filter(([p, a]) => a.invs.length || a.work > 0);
+  const T = k => sum(ps, x => x[1][k]);
+  let h = `<div class="card"><div class="kv"><span>جمع فاکتورهای پروژه‌ها</span><span>${fmc(T('invoiced'))}</span></div><div class="kv"><span>دریافتی از کارفرماها</span><span class="pos">${fmc(T('received'))}</span></div>
+    <div class="kv total"><span>طلب از کارفرماها</span><span>${fmc(Math.max(0, T('due')))}</span></div>${T('unbilled') > 0 ? `<div class="mut" style="margin-top:6px">کار فاکتورنشده: ${fmc(T('unbilled'))}</div>` : ''}</div>` + seg;
+  if (!ps.length) h += empty('برای فاکتورها «پروژه مرتبط» را انتخاب کنید تا حساب هر پروژه با کارفرما اینجا دیده شود.', 'site', 'هنوز حسابی نیست');
+  else h += '<div class="list">' + ps.map(([p, a]) => `<div class="li" onclick="go('project',{id:${p.id}})"><span class="av sq on">${ic('site')}</span>
+    <div class="d"><b>${esc(p.name)}</b><div class="mut">فاکتور ${fm(a.invoiced)} · دریافتی ${fm(a.received)}${a.unbilled > 0 ? ` · فاکتورنشده ${fm(a.unbilled)}` : ''}</div></div>
+    <div class="v">${fm(Math.max(0, a.due))}<small>طلب از کارفرما</small></div></div>`).join('') + '</div>';
+  return { title: 'فاکتورها', html: h, fab: 'invNewMenu()' };
+}
 function invNewMenu() {
   openForm('فاکتور جدید', [{ k: 'kind', label: 'نوع', type: 'select', opts: [['inv', 'فاکتور فروش / اجرا'], ['pre', 'پیش فاکتور']], value: 'inv' }],
     o => { setTimeout(() => newInvoice(o.kind), 0); });
@@ -245,11 +324,14 @@ V.invoice = r => {
     <div class="kv"><span>تخفیف فاکتور</span><span>${fmc(inv.discount)}</span></div>
     <div class="kv"><span>کسر رند</span><span>${fmc(c.round)}</span></div>
     <div class="kv total"><span>قابل پرداخت</span><span>${fmc(c.payable)}</span></div>
-    <div class="kv"><span>پرداخت نقدی</span><span>${fmc(inv.cash)}</span></div>
-    <div class="kv"><span>پرداخت چکی</span><span>${fmc(inv.cheque)}</span></div>
-    <div class="kv"><span>مانده</span><span class="${c.remain > 0 ? 'neg' : ''}">${fmc(Math.max(0, c.remain))}</span></div>
+    <div class="mut" style="text-align:center;margin-top:6px">برای ثبت تخفیف و مالیات بزنید</div></div>`;
+  h += `<div class="sec">دریافتی‌ها</div><div class="card">
+    ${(inv.pays || []).length ? inv.pays.slice().sort(byDateDesc).map(p => payRow(inv, p)).join('') : '<div class="mut">دریافتی ثبت نشده</div>'}
+    <div class="kv" style="margin-top:6px"><span>پرداخت نقدی / کارت</span><span>${fmc(c.cashP)}</span></div>
+    <div class="kv"><span>پرداخت چکی</span><span>${fmc(c.chqP)}</span></div>
+    <div class="kv total"><span>مانده</span><span class="${c.remain > 0 ? 'neg' : ''}">${fmc(Math.max(0, c.remain))}</span></div>
     <div class="kv"><span>وضعیت فاکتور</span><span class="badge ${st[1]}">${st[0]}</span></div>
-    <div class="mut" style="text-align:center;margin-top:6px">برای ثبت تخفیف، مالیات و پرداخت‌ها بزنید</div></div>`;
+    <button class="btn pri wide" style="margin:10px 0 0" onclick="invPayForm(${inv.id})">${ic('in')} ثبت دریافت</button></div>`;
   h += `<div class="card click" onclick="noteForm(${inv.id})"><div class="ct"><b style="font-size:14px">یادداشت زیر فاکتور</b><span class="mut">${ic('edit')}</span></div><div class="mut">${inv.note ? esc(inv.note) : 'ندارد'}</div></div>`;
   h += `<div class="row" style="margin-bottom:10px"><button class="btn pri" style="flex:1" onclick="invPdf(${inv.id},'save')">${ic('pdf')} ذخیره PDF</button><button class="btn dark" style="flex:1" onclick="invPdf(${inv.id},'share')">${ic('share')} ارسال</button></div>
     <div class="row"><button class="btn" style="flex:1" onclick="go('invPreview',{id:${inv.id}})">${ic('eye')} پیش‌نمایش</button><button class="btn" style="flex:1" onclick="dupInvoice(${inv.id}${inv.kind === 'pre' ? ",'inv'" : ''})">${ic('copy')} ${inv.kind === 'pre' ? 'تبدیل به فاکتور' : 'کپی فاکتور'}</button></div>`;
@@ -346,7 +428,7 @@ ${S('terms') ? `<div class="box"><div class="note">${e(S('terms'))}</div></div>`
 ${tl('جمع', fmc(c.sub))}${tl('جمع تخفیف‌ها', fmc(c.idisc))}${tl(`مالیات ${inv.taxOn ? faNum(inv.taxRate) + '٪' : ''}`, fmc(c.tax))}
 ${tl('جمع کل', fmc(c.total), 'sep')}${tl('تخفیف فاکتور', fmc(inv.discount))}${tl('کسر رند', fmc(c.round))}
 ${tl('قابل پرداخت', fmc(c.payable), 'pay')}
-${c.paid ? tl('پرداخت نقدی', fmc(inv.cash), 'sep') + tl('پرداخت چکی' + (inv.chequeNote ? ` (${e(inv.chequeNote)})` : ''), fmc(inv.cheque)) + tl('<b>مانده</b>', `<b>${fmc(Math.max(0, c.remain))}</b>`) : ''}
+${c.paid ? tl('پرداخت نقدی', fmc(c.cashP), 'sep') + tl('پرداخت چکی', fmc(c.chqP)) + tl('<b>مانده</b>', `<b>${fmc(Math.max(0, c.remain))}</b>`) : ''}
 </table></div></div>
 ${S('sign') === '1' || sp ? `<div class="sig"><div>مهر و امضای فروشنده${sp ? `<img src="${sp}">` : ''}</div><div>امضای خریدار</div></div>` : ''}
 ${S('footer') ? `<div class="foot">${e(S('footer'))}</div>` : ''}

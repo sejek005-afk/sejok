@@ -237,3 +237,5 @@ table.mt tr.tot td { font-weight: 800; border-top: 2px solid var(--graphite); bo
 .chips button.on { background: var(--graphite); border-color: var(--graphite); color: #fff; font-weight: 700; }
 .chips button .d { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-left: 6px; }
 .warn { background: var(--yellow-soft); border: 1px solid #F0D27A; border-radius: 14px; padding: 10px 12px; margin-bottom: 12px; display: flex; gap: 10px; align-items: center; font-size: 13px; }
+.cal .c.h { background: var(--yellow); color: var(--graphite); font-weight: 700; }
+.sb.h { background: var(--yellow); color: var(--graphite); font-weight: 700; }

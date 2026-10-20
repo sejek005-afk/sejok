@@ -10,6 +10,14 @@ function fix(d) {
   d.att = d.att && typeof d.att === 'object' ? d.att : {};
   d.invoices = Array.isArray(d.invoices) ? d.invoices : [];
   d.notes = Array.isArray(d.notes) ? d.notes : [];
+  d.adj = Array.isArray(d.adj) ? d.adj : [];
+  d.cheques = Array.isArray(d.cheques) ? d.cheques : [];
+  for (const inv of d.invoices) {
+    if (!Array.isArray(inv.pays)) inv.pays = [];
+    if (inv.cash > 0) inv.pays.push({ id: d.seq++, date: inv.date, amount: inv.cash, method: 'cash', note: '' });
+    if (inv.cheque > 0) inv.pays.push({ id: d.seq++, date: inv.date, amount: inv.cheque, method: 'cheque', note: inv.chequeNote || '' });
+    inv.cash = 0; inv.cheque = 0;
+  }
   d.inv = d.inv && typeof d.inv === 'object' ? d.inv : {};
   d.seq = d.seq || 1;
   d.v = 1;
@@ -141,10 +149,16 @@ function agg(pred, pids) {
   }
   for (const k in DB.att) {
     const a = DB.att[k];
-    if (a.s !== 'p') continue;
+    if (a.s !== 'p' && a.s !== 'h') continue;
     if (pids && !pids.has(a.p)) continue;
     if (!pred(k.split('|')[1])) continue;
-    r.workers += a.w || 0; r.wdays++;
+    r.workers += a.w || 0; r.wdays += a.s === 'h' ? 0.5 : 1;
+  }
+  for (const x of DB.adj) {
+    if (pids && !pids.has(x.projectId)) continue;
+    if (!pred(x.date)) continue;
+    const v = (x.type === 'fine' ? -1 : 1) * (x.amount || 0);
+    if (x.who === 'i') r.installers += v; else r.workers += v;
   }
   for (const t of DB.tx) {
     if (t.type !== 'extra') continue;
@@ -157,23 +171,36 @@ function agg(pred, pids) {
 }
 const ALL = () => true;
 
+function adjOf(who, id) {
+  const xs = DB.adj.filter(x => x.who === who && x.pid === id);
+  return { list: xs, bonus: sum(xs.filter(x => x.type === 'bonus'), x => x.amount), fine: sum(xs.filter(x => x.type === 'fine'), x => x.amount) };
+}
+function paysOf(type, key, id) {
+  const pays = DB.tx.filter(t => t.type === type && t[key] === id);
+  const settles = pays.filter(t => t.sub === 'settle').sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
+  return { pays, paid: sum(pays, t => t.amount), adv: sum(pays.filter(t => t.sub === 'advance'), t => t.amount), lastSettle: settles[0] || null };
+}
 function workerStats(w) {
-  let days = 0, absent = 0, earned = 0;
+  let days = 0, absent = 0, work = 0;
   const pre = w.id + '|';
   for (const k in DB.att) {
     if (!k.startsWith(pre)) continue;
     const a = DB.att[k];
-    if (a.s === 'p') { days++; earned += a.w || 0; } else absent++;
+    if (a.s === 'p') { days++; work += a.w || 0; }
+    else if (a.s === 'h') { days += 0.5; work += a.w || 0; }
+    else absent++;
   }
-  const paid = sum(DB.tx.filter(t => t.type === 'wpay' && t.workerId === w.id), t => t.amount);
-  return { days, absent, earned, paid, bal: earned - paid };
+  const ad = adjOf('w', w.id), py = paysOf('wpay', 'workerId', w.id);
+  const earned = work + ad.bonus - ad.fine;
+  return { days, absent, work, bonus: ad.bonus, fine: ad.fine, adjs: ad.list, earned, paid: py.paid, adv: py.adv, pays: py.pays, lastSettle: py.lastSettle, bal: earned - py.paid };
 }
 function instStats(i) {
   const works = DB.progress.filter(e => e.installerId === i.id);
   const meters = sum(works, e => e.instMeters);
-  const earned = sum(works, e => e.instMeters * e.instRate);
-  const paid = sum(DB.tx.filter(t => t.type === 'ipay' && t.installerId === i.id), t => t.amount);
-  return { works, meters, earned, paid, bal: earned - paid };
+  const work = sum(works, e => e.instMeters * e.instRate);
+  const ad = adjOf('i', i.id), py = paysOf('ipay', 'installerId', i.id);
+  const earned = work + ad.bonus - ad.fine;
+  return { works, meters, work, bonus: ad.bonus, fine: ad.fine, adjs: ad.list, earned, paid: py.paid, adv: py.adv, pays: py.pays, lastSettle: py.lastSettle, bal: earned - py.paid };
 }
 function contrStats(c) {
   const txs = DB.tx.filter(t => t.contractorId === c.id);
@@ -387,6 +414,7 @@ function contractorForm(id) {
 }
 
 const TXT = { in: 'دریافتی', wpay: 'واریز به شاگرد', ipay: 'پرداخت به نصاب', extra: 'هزینه مازاد' };
+const txLabel = t => t.sub === 'advance' ? 'مساعده' : t.sub === 'settle' ? 'تسویه حساب' : TXT[t.type];
 // preset: مقادیر ثابت مثل {type:'wpay', workerId:3} یا {contractorId:2}
 function txForm(id, preset) {
   const t = id ? DB.tx.find(x => x.id === id) : null;
@@ -404,7 +432,7 @@ function txForm(id, preset) {
     { k: 'contractorId', label: 'از طرف پیمانکار', type: 'select', numeric: true, opts: contrOpts('— بدون پیمانکار —'), value: v('contractorId'), when: o => T(o) !== 'in' },
     { k: 'note', label: 'توضیحات', type: 'textarea', value: v('note') },
   );
-  const title = t ? 'ویرایش ' + TXT[t.type] : (ps.type ? TXT[ps.type] + ' جدید' : 'تراکنش جدید');
+  const title = t ? 'ویرایش ' + txLabel(t) : (ps.type ? TXT[ps.type] + ' جدید' : 'تراکنش جدید');
   openForm(title, fields, o => {
     const type = o.type || ps.type;
     const rec = { type, amount: o.amount, date: o.date, note: o.note, workerId: null, installerId: null, projectId: null, contractorId: null };
@@ -453,23 +481,31 @@ function setAtt(wid, date, status, pid) {
   const w = worker(wid); const k = wid + '|' + date;
   if (status === null) { delete DB.att[k]; }
   else if (status === 'a') { DB.att[k] = { p: (DB.att[k] && DB.att[k].p) || w.projectId || null, s: 'a', w: 0 }; }
+  else if (status === 'h') {
+    const p = pid || (DB.att[k] && DB.att[k].p) || w.projectId;
+    if (!p) { toast('ابتدا برای شاگرد پروژه انتخاب کنید'); return; }
+    DB.att[k] = { p: +p, s: 'h', w: Math.round((w.wage || 0) / 2) };
+  }
   else {
     const p = pid || (DB.att[k] && DB.att[k].p) || w.projectId;
     if (!p) { toast('ابتدا برای شاگرد پروژه انتخاب کنید'); return; }
-    DB.att[k] = { p: +p, s: 'p', w: (DB.att[k] && DB.att[k].s === 'p' && DB.att[k].w) || w.wage || 0 };
+    const keep = DB.att[k] && (DB.att[k].s === 'p' || DB.att[k].s === 'h') ? DB.att[k].s : 'p';
+    if (pid && keep === 'h') DB.att[k] = { p: +p, s: 'h', w: DB.att[k].w };
+    else DB.att[k] = { p: +p, s: 'p', w: (DB.att[k] && DB.att[k].s === 'p' && DB.att[k].w) || w.wage || 0 };
   }
   save(); render();
 }
 function attDayForm(wid, date) {
   const w = worker(wid); const a = DB.att[wid + '|' + date];
   openForm(`${fullName(w)} — ${showDate(date)}`, [
-    { k: 's', label: 'وضعیت', type: 'select', opts: [['p', 'حاضر'], ['a', 'غایب'], ['', 'ثبت نشده']], value: a ? a.s : 'p' },
-    { k: 'p', label: 'پروژه', type: 'select', numeric: true, opts: projOpts(), value: a ? a.p : w.projectId, when: o => o.s === 'p' },
+    { k: 's', label: 'وضعیت', type: 'select', opts: [['p', 'حاضر'], ['h', 'نیم‌روز'], ['a', 'غایب'], ['', 'ثبت نشده']], value: a ? a.s : 'p' },
+    { k: 'p', label: 'پروژه', type: 'select', numeric: true, opts: projOpts(), value: a ? a.p : w.projectId, when: o => o.s === 'p' || o.s === 'h' },
     { k: 'w', label: 'دستمزد این روز (تومان)', type: 'money', value: a && a.s === 'p' ? a.w : w.wage, when: o => o.s === 'p' },
   ], o => {
     const k = wid + '|' + date;
     if (o.s === '') delete DB.att[k];
     else if (o.s === 'a') DB.att[k] = { p: o.p || w.projectId || null, s: 'a', w: 0 };
+    else if (o.s === 'h') { if (!o.p) { toast('پروژه را انتخاب کنید'); return false; } DB.att[k] = { p: o.p, s: 'h', w: Math.round((w.wage || 0) / 2) }; }
     else { if (!o.p) { toast('پروژه را انتخاب کنید'); return false; } DB.att[k] = { p: o.p, s: 'p', w: o.w }; }
   });
 }
@@ -509,7 +545,7 @@ function txRow(t, show) {
   if (show !== 'contr' && t.contractorId) parts.push('پیمانکار: ' + cname(t.contractorId));
   if (show !== 'target' && who) parts.push(who);
   const sign = t.type === 'in' ? '+' : '−';
-  return `<div class="tx" onclick="txForm(${t.id})"><span class="dot ${t.type === 'in' ? 'in' : 'out'}">${ic(t.type === 'in' ? 'in' : 'out')}</span><div class="d"><div>${TXT[t.type]}${t.note ? ' — ' + esc(t.note) : ''}</div><div class="mut">${esc(parts.join(' · '))}</div></div>
+  return `<div class="tx" onclick="txForm(${t.id})"><span class="dot ${t.type === 'in' ? 'in' : 'out'}">${ic(t.type === 'in' ? 'in' : 'out')}</span><div class="d"><div>${txLabel(t)}${t.note ? ' — ' + esc(t.note) : ''}</div><div class="mut">${esc(parts.join(' · '))}</div></div>
     <div class="a ${t.type === 'in' ? 'pos' : 'neg'}">${sign} ${Math.round(t.amount).toLocaleString('fa-IR')}</div></div>`;
 }
 const byDateDesc = (a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id;
@@ -519,7 +555,7 @@ const V = {};
 V.home = () => {
   const t = todayJ(); const ym = t.slice(0, 7);
   const m = agg(d => d.startsWith(ym), null);
-  const present = Object.keys(DB.att).filter(k => k.endsWith('|' + t) && DB.att[k].s === 'p').length;
+  const present = Object.keys(DB.att).filter(k => k.endsWith('|' + t) && ['p', 'h'].includes(DB.att[k].s)).length;
   const todayM = agg(d => d === t, null).meters;
   let h = `<div class="diary"><div class="wd">${dayName(t)}</div><div class="date">${showDate(t)}</div>
     <div class="row2"><div class="st"><small>شاگرد حاضر امروز</small><b>${faDigits(present)} نفر</b></div>
@@ -568,6 +604,7 @@ V.project = r => {
       <div style="text-align:left"><div class="mut">باقی‌مانده</div><b>${faNum(Math.max(0, (p.area || 0) - a.meters))} متر</b></div></div>
       ${tape(pct)}<div class="mut">از متراژ کل ${faNum(p.area || 0)} متر مربع</div></div>`;
     h += `<div class="card">${breakdown(a, p)}</div>`;
+    if (window.projAccountCard) h += projAccountCard(p);
     h += `<div class="card"><div class="ct"><b>اطلاعات پروژه</b><button class="btn sm" onclick="projectForm(${p.id})">ویرایش</button></div>
       ${p.address ? `<div class="kv"><span>آدرس</span><span>${esc(p.address)}</span></div>` : ''}
       <div class="kv"><span>دسته</span><span>${esc((cat(p.catId) || {}).name || '')}</span></div>
@@ -618,8 +655,8 @@ function attRow(w, date, withProject) {
   const s = a ? a.s : '';
   const pid = (a && a.p) || w.projectId || '';
   return `<div class="att"><div class="n" onclick="go('worker',{id:${w.id}})"><span class="av ${w.active ? 'on' : ''}">${ic('helmet')}</span><div><div>${esc(fullName(w))}</div>
-    <div class="mut">${w.active ? 'حضور خودکار' : 'غیرفعال'}</div></div></div>
-    <span class="seg"><button class="sb ${s === 'p' ? 'p' : ''}" onclick="setAtt(${w.id},'${date}','p')">حاضر</button><button class="sb ${s === 'a' ? 'a' : ''}" onclick="setAtt(${w.id},'${date}','a')">غایب</button></span>
+    <div class="mut">${s === 'h' ? 'نیم‌روز' : w.active ? 'حضور خودکار' : 'غیرفعال'}</div></div></div>
+    <span class="seg"><button class="sb ${s === 'p' ? 'p' : ''}" onclick="setAtt(${w.id},'${date}','p')">حاضر</button><button class="sb ${s === 'h' ? 'h' : ''}" onclick="setAtt(${w.id},'${date}','h')">نیم‌روز</button><button class="sb ${s === 'a' ? 'a' : ''}" onclick="setAtt(${w.id},'${date}','a')">غایب</button></span>
     ${withProject ? `<select class="ps" onchange="setAtt(${w.id},'${date}','p',this.value)">${projOpts('— پروژه —').map(o => `<option value="${o[0]}" ${String(o[0]) === String(pid) ? 'selected' : ''}>${esc(o[1])}</option>`).join('')}</select>` : ''}</div>`;
 }
 
@@ -645,36 +682,143 @@ V.worker = r => {
   let h = `<div class="card"><div class="switch"><div><b>فعال (حضور خودکار)</b><div class="mut">${w.active ? 'هر روز به‌طور خودکار حاضر ثبت می‌شود' : 'حضور خودکار خاموش است'}</div></div>
     <button class="tg ${w.active ? 'on' : ''}" onclick="toggleActive(${w.id})"></button></div>
     <label class="fld" style="margin:10px 0 0">پروژه فعلی<select onchange="moveWorker(${w.id},this.value)">${projOpts('— بدون پروژه —').map(o => `<option value="${o[0]}" ${String(o[0]) === String(w.projectId || '') ? 'selected' : ''}>${esc(o[1])}</option>`).join('')}</select></label></div>`;
-  h += `<div class="card"><div class="kv"><span>روزهای حضور</span><span>${faDigits(s.days)} روز</span></div>
-    <div class="kv"><span>روزهای غیبت</span><span>${faDigits(s.absent)} روز</span></div>
-    <div class="kv"><span>کارکرد تا امروز</span><span>${money(s.earned)}</span></div>
-    <div class="kv"><span>دریافتی (واریزها)</span><span>${money(s.paid)}</span></div>
-    <div class="kv total"><span>طلب تا امروز</span><span>${money(s.bal, 1)}</span></div></div>`;
+  h += personAccount('w', w, s, `<div class="kv"><span>روزهای کارکرد</span><span>${faNum(s.days)} روز${s.absent ? ` · ${faDigits(s.absent)} غیبت` : ''}</span></div>
+    <div class="kv"><span>دستمزد روزهای کارکرد</span><span>${money(s.work)}</span></div>`);
   // تقویم
   const first = J.j2d(yy, mm, 1), len = J.monthLen(yy, mm), off = (first + 2) % 7;
   const prev = mm === 1 ? `${yy - 1}/12` : `${yy}/${p2(mm - 1)}`;
   const next = mm === 12 ? `${yy + 1}/01` : `${yy}/${p2(mm + 1)}`;
-  h += `<div class="card"><div class="calnav"><button class="ic" onclick="setSub('ym','${prev}')">›</button><b>${MN[mm - 1]} ${faDigits(yy)}</b><button class="ic" onclick="setSub('ym','${next}')">‹</button></div><div class="cal">`;
+  h += `<div class="sec">حضور و غیاب</div><div class="card"><div class="calnav"><button class="ic" onclick="setSub('ym','${prev}')">›</button><b>${MN[mm - 1]} ${faDigits(yy)}</b><button class="ic" onclick="setSub('ym','${next}')">‹</button></div><div class="cal">`;
   h += WD.map(d => `<div class="h">${d}</div>`).join('');
   for (let i = 0; i < off; i++) h += '<div></div>';
   const tj = todayJdn();
   let mDays = 0, mEarn = 0;
   for (let d = 1; d <= len; d++) {
     const ds = `${yy}/${p2(mm)}/${p2(d)}`; const a = DB.att[w.id + '|' + ds];
-    if (a && a.s === 'p') { mDays++; mEarn += a.w || 0; }
+    if (a && (a.s === 'p' || a.s === 'h')) { mDays += a.s === 'h' ? 0.5 : 1; mEarn += a.w || 0; }
     const fut = first + d - 1 > tj;
     h += `<button class="c ${a ? a.s : ''} ${ds === t ? 't' : ''} ${fut ? 'f' : ''}" onclick="attDayForm(${w.id},'${ds}')">${faDigits(d)}</button>`;
   }
-  h += `</div><div class="mut" style="margin-top:8px">این ماه: ${faDigits(mDays)} روز حضور · ${money(mEarn)}</div>
-    <div class="mut">روی هر روز بزنید تا حاضر/غایب یا پروژه آن روز را تغییر دهید.</div></div>`;
+  h += `</div><div class="mut" style="margin-top:8px">این ماه: ${faNum(mDays)} روز کارکرد · ${money(mEarn)}</div>
+    <div class="mut">سبز: حاضر · زرد: نیم‌روز · قرمز: غایب — روی هر روز بزنید تا تغییر دهید.</div></div>`;
   h += `<div class="card"><div class="ct"><b>اطلاعات</b><button class="btn sm" onclick="workerForm(${w.id})">ویرایش</button></div>
     <div class="kv"><span>محل سکونت</span><span>${esc(w.address || '—')}</span></div>
     ${w.phone ? `<div class="kv"><span>تماس</span><span>${esc(faDigits(w.phone))}</span></div>` : ''}
     <div class="kv"><span>دستمزد روزانه</span><span>${money(w.wage)}</span></div></div>`;
-  const pays = DB.tx.filter(x => x.type === 'wpay' && x.workerId === w.id).sort(byDateDesc);
-  h += `<div class="sec">واریزی‌ها</div><div class="card">${pays.length ? pays.map(x => txRow(x, 'target')).join('') : '<div class="mut">واریزی ثبت نشده</div>'}</div>`;
+  h += personLists('w', w, s);
   return { title: fullName(w), html: h, fab: `txForm(null,{type:'wpay',workerId:${w.id}})`, edit: `workerForm(${w.id})` };
 };
+
+// ---------- حساب شاگرد / نصاب ----------
+function personAccount(kind, x, s, firstRows) {
+  const ls = s.lastSettle;
+  return `<div class="card">${firstRows}
+    ${s.bonus ? `<div class="kv"><span>پاداش و اضافه‌کار</span><span class="pos">+ ${money(s.bonus)}</span></div>` : ''}
+    ${s.fine ? `<div class="kv"><span>جریمه و کسورات</span><span class="neg">− ${money(s.fine)}</span></div>` : ''}
+    <div class="kv"><span><b style="color:var(--ink)">جمع کارکرد</b></span><span><b>${money(s.earned)}</b></span></div>
+    ${s.adv ? `<div class="kv"><span>مساعده (جزو پرداختی)</span><span>${money(s.adv)}</span></div>` : ''}
+    <div class="kv"><span>پرداختی تا این لحظه</span><span>${money(s.paid)}</span></div>
+    <div class="kv total"><span>${s.bal < 0 ? 'بیش‌پرداخت' : 'طلب تا این لحظه'}</span><span>${money(Math.abs(s.bal), 1)}</span></div>
+    ${ls ? `<div class="mut" style="margin-top:8px">${ic('check')} آخرین تسویه: ${showDate(ls.date)} — ${money(ls.amount)}</div>` : ''}
+    <div class="row" style="margin-top:12px"><button class="btn pri" style="flex:1" onclick="settleForm('${kind}',${x.id})">${ic('check')} تسویه حساب</button><button class="btn dark" style="flex:1" onclick="advanceForm('${kind}',${x.id})">${ic('coins')} مساعده</button></div>
+    <div class="row" style="margin-top:8px"><button class="btn" style="flex:1" onclick="adjForm('${kind}',${x.id},'bonus')">${ic('plus')} پاداش / اضافه‌کار</button><button class="btn" style="flex:1" onclick="adjForm('${kind}',${x.id},'fine')">${ic('out')} جریمه / کسر</button></div>
+    <div class="row" style="margin-top:8px"><button class="btn" style="flex:1" onclick="msgSheet('${kind}',${x.id})">${ic('share')} پیامک / واتساپ</button>${x.phone ? `<button class="btn" onclick="openExt('tel:${esc(toEn(x.phone))}')">${ic('phone')} تماس</button>` : ''}</div></div>`;
+}
+function adjRow(x) {
+  return `<div class="tx" onclick="adjForm('${x.who}',${x.pid},'${x.type}',${x.id})"><span class="dot ${x.type === 'fine' ? 'out' : 'in'}">${ic(x.type === 'fine' ? 'out' : 'plus')}</span><div class="d"><div>${x.type === 'fine' ? 'جریمه / کسر' : 'پاداش / اضافه‌کار'}${x.note ? ' — ' + esc(x.note) : ''}</div><div class="mut">${showDate(x.date)}${x.projectId ? ' · ' + esc(pname(x.projectId)) : ''}</div></div>
+    <div class="a ${x.type === 'fine' ? 'neg' : 'pos'}">${x.type === 'fine' ? '−' : '+'} ${Math.round(x.amount).toLocaleString('fa-IR')}</div></div>`;
+}
+function personLists(kind, x, s) {
+  const pays = s.pays.slice().sort(byDateDesc);
+  let h = `<div class="sec">پرداختی‌ها، مساعده و تسویه‌ها</div><div class="card">${pays.length ? pays.map(t => txRow(t, 'target')).join('') : '<div class="mut">پرداختی ثبت نشده</div>'}</div>`;
+  if (s.adjs.length) h += `<div class="sec">پاداش و جریمه</div><div class="card">${s.adjs.slice().sort(byDateDesc).map(adjRow).join('')}</div>`;
+  return h;
+}
+const personOf = (kind, id) => kind === 'w' ? worker(id) : inst(id);
+const statsOf = (kind, x) => kind === 'w' ? workerStats(x) : instStats(x);
+function payRec(kind, x, o, sub) {
+  return { id: nid(), type: kind === 'w' ? 'wpay' : 'ipay', sub, amount: o.amount, date: o.date, note: o.note, workerId: kind === 'w' ? x.id : null, installerId: kind === 'i' ? x.id : null, projectId: null, contractorId: o.contractorId || null };
+}
+function settleForm(kind, id) {
+  const x = personOf(kind, id), s = statsOf(kind, x);
+  if (s.bal <= 0) { toast('طلبی برای تسویه وجود ندارد'); return; }
+  openForm(`تسویه حساب با ${fullName(x)}`, [
+    { k: 'date', label: 'تاریخ تسویه', type: 'date' },
+    { k: 'amount', label: 'مبلغ پرداختی (تومان)', type: 'money', req: true, value: Math.round(s.bal), hint: `طلب تا این لحظه: ${Math.round(s.bal).toLocaleString('fa-IR')} تومان. اگر کمتر بپردازید، باقی‌مانده به‌عنوان طلب می‌ماند.` },
+    { k: 'contractorId', label: 'پرداخت از طرف پیمانکار (اختیاری)', type: 'select', numeric: true, opts: contrOpts('— بدون پیمانکار —'), value: '' },
+    { k: 'note', label: 'توضیحات', type: 'textarea', value: `تسویه حساب تا ${showDate(todayJ())}` },
+  ], o => { DB.tx.push(payRec(kind, x, o, 'settle')); return () => settledInfo(kind, id, o.amount); });
+}
+function settledInfo(kind, id, amount) {
+  const x = personOf(kind, id), s = statsOf(kind, x);
+  info('تسویه ثبت شد', `<div class="kv"><span>مبلغ پرداخت‌شده</span><span>${money(amount)}</span></div><div class="kv total"><span>مانده طلب</span><span>${money(Math.max(0, s.bal), 1)}</span></div>
+    <p class="mut">رسید تسویه را برای ${esc(fullName(x))} بفرستید:</p><button class="btn dark wide" onclick="closeModal();msgSheet('${kind}',${id},'settle')">${ic('share')} ارسال رسید با پیامک / واتساپ</button>`);
+}
+function advanceForm(kind, id) {
+  const x = personOf(kind, id);
+  openForm(`مساعده به ${fullName(x)}`, [
+    { k: 'date', label: 'تاریخ', type: 'date' },
+    { k: 'amount', label: 'مبلغ مساعده (تومان)', type: 'money', req: true },
+    { k: 'contractorId', label: 'از طرف پیمانکار (اختیاری)', type: 'select', numeric: true, opts: contrOpts('— بدون پیمانکار —'), value: '' },
+    { k: 'note', label: 'توضیحات', type: 'textarea' },
+  ], o => { DB.tx.push(payRec(kind, x, o, 'advance')); toast('مساعده ثبت شد و از طلب کسر می‌شود'); });
+}
+function adjForm(kind, id, type, adjId) {
+  const x = personOf(kind, id); const e = adjId ? DB.adj.find(a => a.id === adjId) : null;
+  const t = e ? e.type : type;
+  openForm((e ? 'ویرایش ' : '') + (t === 'fine' ? 'جریمه / کسر' : 'پاداش / اضافه‌کار') + ` — ${fullName(x)}`, [
+    { k: 'date', label: 'تاریخ', type: 'date', value: e && e.date },
+    { k: 'amount', label: 'مبلغ (تومان)', type: 'money', req: true, value: e && e.amount },
+    { k: 'projectId', label: 'پروژه (اختیاری، برای محاسبه هزینه پروژه)', type: 'select', numeric: true, opts: projOpts('— بدون پروژه —'), value: e ? e.projectId || '' : (x.projectId || '') },
+    { k: 'note', label: t === 'fine' ? 'علت (مثلاً تأخیر، خسارت)' : 'توضیحات (مثلاً اضافه‌کار جمعه)', type: 'textarea', value: e && e.note },
+  ], o => {
+    const rec = { date: o.date, amount: o.amount, projectId: o.projectId || null, note: o.note };
+    if (e) Object.assign(e, rec); else DB.adj.push(Object.assign({ id: nid(), who: kind, pid: x.id, type: t }, rec));
+  }, e ? () => { DB.adj = DB.adj.filter(a => a !== e); } : null);
+}
+
+// ---------- پیامک / واتساپ ----------
+function openExt(url) { if (window.Android && Android.openUrl) Android.openUrl(url); else window.open(url, '_blank'); }
+function personText(kind, id, mode) {
+  const x = personOf(kind, id), s = statsOf(kind, x);
+  const f = n => Math.round(n).toLocaleString('fa-IR') + ' تومان';
+  const L = [`${fullName(x)} عزیز، سلام`];
+  if (mode === 'settle' && s.lastSettle) {
+    L.push(`مبلغ ${f(s.lastSettle.amount)} بابت تسویه حساب در تاریخ ${showDate(s.lastSettle.date)} پرداخت شد.`);
+  } else L.push(`گزارش حساب شما تا ${showDate(todayJ())}:`);
+  if (kind === 'w') L.push(`روزهای کارکرد: ${faNum(s.days)} روز`); else L.push(`متراژ کار: ${faNum(s.meters)} متر`);
+  L.push(`مبلغ کارکرد: ${f(s.work)}`);
+  if (s.bonus) L.push(`پاداش و اضافه‌کار: ${f(s.bonus)}`);
+  if (s.fine) L.push(`جریمه و کسورات: ${f(s.fine)}`);
+  if (s.adv) L.push(`مساعده: ${f(s.adv)}`);
+  L.push(`پرداختی تا این لحظه: ${f(s.paid)}`);
+  L.push(s.bal >= 0 ? `مانده طلب شما: ${f(s.bal)}` : `بیش‌پرداخت: ${f(-s.bal)}`);
+  const biz = DB.inv && DB.inv.biz; L.push(biz || 'راوانو');
+  return L.join('\n');
+}
+function msgSheet(kind, id, mode) {
+  const x = personOf(kind, id);
+  showModal(`<div class="sheet"><div class="sh-head"><b>ارسال پیام به ${esc(fullName(x))}</b><button class="x" onclick="closeModal()">${ic('x')}</button></div><div class="sh-body">
+    <label class="fld">شماره موبایل<input id="msgPhone" dir="ltr" style="text-align:left" inputmode="tel" value="${esc(toEn(x.phone || ''))}" placeholder="09xxxxxxxxx"></label>
+    <label class="fld">متن پیام<textarea id="msgText" style="min-height:190px">${esc(personText(kind, id, mode))}</textarea></label></div>
+    <div class="sh-foot"><button class="btn pri" onclick="sendMsg('sms')">${ic('share')} پیامک</button><button class="btn dark" onclick="sendMsg('wa')">واتساپ</button><button class="btn" onclick="sendMsg('other')">سایر</button></div></div>`);
+}
+function sendMsg(ch) {
+  const text = document.getElementById('msgText').value;
+  const ph = toEn(document.getElementById('msgPhone').value).replace(/[^\d+]/g, '');
+  if (ch === 'sms') {
+    if (window.Android && Android.sendSms) Android.sendSms(ph, text);
+    else openExt(`sms:${ph}?body=${encodeURIComponent(text)}`);
+  } else if (ch === 'wa') {
+    let p = ph.replace(/^\+/, '');
+    if (p.startsWith('00')) p = p.slice(2);
+    if (p.startsWith('0')) p = '98' + p.slice(1);
+    openExt(p ? `https://wa.me/${p}?text=${encodeURIComponent(text)}` : `https://wa.me/?text=${encodeURIComponent(text)}`);
+  } else {
+    if (window.Android && Android.shareText) Android.shareText(text);
+    else if (navigator.share) navigator.share({ text }).catch(() => { });
+  }
+}
 
 V.attendance = r => {
   const d = r.date || todayJ(); const n = jToJdn(d);
@@ -685,7 +829,7 @@ V.attendance = r => {
   if (!DB.workers.length) h += empty('شاگردی ثبت نشده.');
   else {
     const list = DB.workers.slice().sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0));
-    const present = list.filter(w => (DB.att[w.id + '|' + d] || {}).s === 'p');
+    const present = list.filter(w => ['p', 'h'].includes((DB.att[w.id + '|' + d] || {}).s));
     h += `<div class="card">${list.map(w => attRow(w, d, true)).join('')}</div>`;
     h += `<div class="card"><div class="kv"><span>حاضرین</span><span>${faDigits(present.length)} نفر</span></div><div class="kv"><span>جمع دستمزد این روز</span><span>${money(sum(present, w => DB.att[w.id + '|' + d].w))}</span></div></div>`;
   }
@@ -707,18 +851,15 @@ V.installers = () => {
 V.installer = r => {
   const i = inst(r.id); if (!i) { stack.pop(); return V[cur().name](cur()); }
   const s = instStats(i);
-  let h = `<div class="card"><div class="kv"><span>متراژ کار تا امروز</span><span>${faNum(s.meters)} متر</span></div>
-    <div class="kv"><span>کارکرد</span><span>${money(s.earned)}</span></div>
-    <div class="kv"><span>دریافتی</span><span>${money(s.paid)}</span></div>
-    <div class="kv total"><span>طلب تا امروز</span><span>${money(s.bal, 1)}</span></div></div>`;
+  let h = personAccount('i', i, s, `<div class="kv"><span>متراژ کار تا این لحظه</span><span>${faNum(s.meters)} متر</span></div>
+    <div class="kv"><span>دستمزد متراژ کار</span><span>${money(s.work)}</span></div>`);
   h += `<div class="card"><div class="ct"><b>اطلاعات</b><button class="btn sm" onclick="installerForm(${i.id})">ویرایش</button></div>
     <div class="kv"><span>محل زندگی</span><span>${esc(i.address || '—')}</span></div>
     ${i.phone ? `<div class="kv"><span>تماس</span><span>${esc(faDigits(i.phone))}</span></div>` : ''}
     <div class="kv"><span>دستمزد هر متر</span><span>${money(i.rate)}</span></div></div>`;
   const works = s.works.slice().sort(byDateDesc);
   h += `<div class="sec">کارکردها (از بخش پیشرفت کار پروژه‌ها)</div><div class="card">${works.length ? works.map(e => `<div class="tx" onclick="go('project',{id:${e.projectId},sub:'prog'})"><div class="d"><div>${esc(pname(e.projectId))} — ${faNum(e.instMeters)} متر</div><div class="mut">${showDate(e.date)}</div></div><div class="a">${Math.round(e.instMeters * e.instRate).toLocaleString('fa-IR')}</div></div>`).join('') : '<div class="mut">هنوز کارکردی ثبت نشده. هنگام ثبت پیشرفت کار، نصاب را انتخاب کنید.</div>'}</div>`;
-  const pays = DB.tx.filter(x => x.type === 'ipay' && x.installerId === i.id).sort(byDateDesc);
-  h += `<div class="sec">پرداختی‌ها</div><div class="card">${pays.length ? pays.map(x => txRow(x, 'target')).join('') : '<div class="mut">پرداختی ثبت نشده</div>'}</div>`;
+  h += personLists('i', i, s);
   return { title: fullName(i), html: h, fab: `txForm(null,{type:'ipay',installerId:${i.id}})`, edit: `installerForm(${i.id})` };
 };
 
@@ -796,7 +937,7 @@ V.settings = () => {
     <label class="btn dark wide">${ic('in')} بازیابی از فایل پشتیبان<input type="file" accept=".json,application/json,text/plain,*/*" style="display:none" onchange="importData(this)"></label></div>
     <div class="card"><div class="kv"><span>دسته‌ها</span><span>${faDigits(DB.cats.length)}</span></div><div class="kv"><span>پروژه‌ها</span><span>${faDigits(n)}</span></div><div class="kv"><span>شاگردها</span><span>${faDigits(w)}</span></div><div class="kv"><span>نصاب‌ها</span><span>${faDigits(DB.installers.length)}</span></div><div class="kv"><span>پیمانکاران</span><span>${faDigits(DB.contractors.length)}</span></div></div>
     <div class="card"><button class="btn danger wide" style="margin:0" onclick="askConfirm('همه اطلاعات برنامه پاک شود؟ این کار قابل بازگشت نیست.',()=>askConfirm('واقعاً مطمئن هستید؟',()=>{DB=fix({});save();tab('home')}))">پاک کردن همه اطلاعات</button></div>
-    <div style="text-align:center;margin-top:18px"><img src="logo.png" alt="راوانو" style="width:150px;opacity:.9"><div class="mut">نسخه ۱٫۵</div></div>`;
+    <div style="text-align:center;margin-top:18px"><img src="logo.png" alt="راوانو" style="width:150px;opacity:.9"><div class="mut">نسخه ۱٫۶</div></div>`;
   return { title: 'تنظیمات', html: h };
 };
 
