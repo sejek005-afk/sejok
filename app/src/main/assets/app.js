@@ -519,7 +519,7 @@ V.home = () => {
       <div style="flex:1;min-width:0"><b style="font-size:16px">${esc(c.name)}</b><div class="mut">${faDigits(ps.length)} پروژه · ${faNum(a.meters)} متر کار</div></div>
       <div class="v">${money(a.net, 1)}<small>خالص کل</small></div></div></div>`;
   }
-  return { title: 'حسابداری پیمانکاری', html: h, fab: 'catForm()', settings: true };
+  return { title: 'راوانو', html: h, fab: 'catForm()', settings: true };
 };
 function dayName(s) { return ['شنبه', 'یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنجشنبه', 'جمعه'][(jToJdn(s) + 2) % 7]; }
 
@@ -781,12 +781,12 @@ V.settings = () => {
     <label class="btn dark wide">${ic('in')} بازیابی از فایل پشتیبان<input type="file" accept=".json,application/json,text/plain,*/*" style="display:none" onchange="importData(this)"></label></div>
     <div class="card"><div class="kv"><span>دسته‌ها</span><span>${faDigits(DB.cats.length)}</span></div><div class="kv"><span>پروژه‌ها</span><span>${faDigits(n)}</span></div><div class="kv"><span>شاگردها</span><span>${faDigits(w)}</span></div><div class="kv"><span>نصاب‌ها</span><span>${faDigits(DB.installers.length)}</span></div><div class="kv"><span>پیمانکاران</span><span>${faDigits(DB.contractors.length)}</span></div></div>
     <div class="card"><button class="btn danger wide" style="margin:0" onclick="askConfirm('همه اطلاعات برنامه پاک شود؟ این کار قابل بازگشت نیست.',()=>askConfirm('واقعاً مطمئن هستید؟',()=>{DB=fix({});save();tab('home')}))">پاک کردن همه اطلاعات</button></div>
-    <div class="mut" style="text-align:center">نسخه ۱٫۱</div>`;
+    <div style="text-align:center;margin-top:18px"><img src="logo.png" alt="راوانو" style="width:150px;opacity:.9"><div class="mut">نسخه ۱٫۲</div></div>`;
   return { title: 'تنظیمات', html: h };
 };
 
 function exportData() {
-  const name = `contractor-backup-${todayJ().replace(/\//g, '-')}.json`;
+  const name = `rawano-backup-${todayJ().replace(/\//g, '-')}.json`;
   const json = JSON.stringify(DB);
   if (window.Android && Android.saveFile) {
     const r = Android.saveFile(name, json);
@@ -832,5 +832,7 @@ function render() {
 
 syncAtt();
 render();
+// صفحه آغازین با لوگو
+setTimeout(() => { const s = document.getElementById('splash'); if (s) { s.classList.add('out'); setTimeout(() => s.remove(), 450); } }, 1700);
 // اگر برنامه چند روز باز بماند، حضور خودکار روزهای جدید هم ثبت شود
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { syncAtt(); render(); } });

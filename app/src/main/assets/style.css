@@ -192,3 +192,14 @@ table.mt tr.tot td { font-weight: 800; border-top: 2px solid var(--graphite); bo
 /* عدد بزرگ */
 .big { font-family: var(--display); font-size: 26px; line-height: 1.3; }
 .hl { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; }
+
+/* صفحه آغازین */
+#splash { position: fixed; inset: 0; z-index: 50; background: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; transition: opacity .45s ease; }
+#splash img { width: min(72vw, 360px); height: auto; animation: rise .6s ease-out both; }
+#splash .sp-sub { color: var(--mut); font-size: 14px; animation: rise .6s .15s ease-out both; }
+#splash .sp-bar { width: 120px; height: 4px; border-radius: 2px; background: var(--paper); overflow: hidden; margin-top: 10px; }
+#splash .sp-bar i { display: block; height: 100%; width: 100%; background: var(--yellow); transform-origin: right; animation: load 1.5s ease-in-out both; }
+#splash.out { opacity: 0; pointer-events: none; }
+@keyframes rise { from { opacity: 0; transform: translateY(12px); } }
+@keyframes load { from { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) { #splash img, #splash .sp-sub, #splash .sp-bar i { animation: none; } }
