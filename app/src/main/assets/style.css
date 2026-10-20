@@ -24,7 +24,7 @@ svg.i { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-widt
 
 /* نوار پایین */
 #nav { position: fixed; bottom: 0; left: 0; right: 0; height: 66px; background: var(--graphite); display: flex; z-index: 10; padding: 0 4px; }
-#nav button { flex: 1; background: none; border: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 11px; color: #9AA3AD; gap: 3px; position: relative; }
+#nav button { flex: 1; min-width: 0; background: none; border: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 10.5px; white-space: nowrap; color: #9AA3AD; gap: 3px; position: relative; }
 #nav button.on { color: var(--yellow); font-weight: 700; }
 #nav button.on::before { content: ''; position: absolute; top: 0; width: 28px; height: 3px; border-radius: 0 0 3px 3px; background: var(--yellow); }
 
@@ -214,3 +214,26 @@ table.mt tr.tot td { font-weight: 800; border-top: 2px solid var(--graphite); bo
 .pvw iframe { width: 794px; border: 0; transform-origin: top right; display: block; background: #fff; }
 .imgbox { width: 74px; height: 56px; border-radius: 12px; background: var(--paper); display: grid; place-items: center; overflow: hidden; color: #A9AFA6; flex-shrink: 0; border: 1px solid var(--line); }
 .imgbox img { max-width: 66px; max-height: 48px; }
+
+/* یادداشت */
+.nb { position: absolute; top: 6px; left: calc(50% - 20px); min-width: 17px; height: 17px; border-radius: 9px; background: var(--bad); color: #fff; font-style: normal; font-size: 10px; font-weight: 800; line-height: 17px; padding: 0 4px; }
+.note { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 12px 14px 12px 12px; margin-bottom: 10px; display: flex; gap: 12px; align-items: flex-start; border-right: 6px solid #B9BFB6; }
+.note.urgent { border-right-color: var(--bad); }
+.note.important { border-right-color: var(--yellow); }
+.note.done { opacity: .55; }
+.note.done .nt { text-decoration: line-through; }
+.note .body { flex: 1; min-width: 0; }
+.note .nt { font-weight: 800; font-size: 15px; }
+.note .tx2 { color: var(--ink); font-size: 13.5px; margin-top: 2px; white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.note .meta { margin-top: 6px; }
+.note .meta .late { color: var(--bad); font-weight: 700; }
+.chip { display: inline-flex; align-items: center; gap: 4px; background: var(--paper); border-radius: 8px; padding: 1px 8px; font-size: 12px; color: var(--ink); }
+.chip svg.i { width: 13px; height: 13px; }
+.chk { width: 30px; height: 30px; border-radius: 50%; border: 2px solid #C3C8C0; background: #fff; display: grid; place-items: center; flex-shrink: 0; color: transparent; padding: 0; }
+.chk.on { background: var(--ok); border-color: var(--ok); color: #fff; }
+.chk svg.i { width: 16px; height: 16px; stroke-width: 2.6; }
+.chips { display: flex; gap: 6px; overflow-x: auto; margin-bottom: 12px; padding-bottom: 2px; }
+.chips button { border: 1px solid var(--line); background: #fff; border-radius: 20px; padding: 5px 14px; font-size: 13px; color: var(--mut); white-space: nowrap; }
+.chips button.on { background: var(--graphite); border-color: var(--graphite); color: #fff; font-weight: 700; }
+.chips button .d { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-left: 6px; }
+.warn { background: var(--yellow-soft); border: 1px solid #F0D27A; border-radius: 14px; padding: 10px 12px; margin-bottom: 12px; display: flex; gap: 10px; align-items: center; font-size: 13px; }

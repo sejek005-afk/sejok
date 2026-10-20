@@ -3,6 +3,8 @@ package ir.sejok.contractor;
 import android.app.Activity;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.app.NotificationManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -35,6 +37,24 @@ public class MainActivity extends Activity {
     private FrameLayout root;
     private WebView pdfView;
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private boolean pendingOpenNotes = false;
+
+    private void openNotes() {
+        handler.postDelayed(() -> web.evaluateJavascript("window.openTab && window.openTab('notes')", null), 300);
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (intent != null && intent.getBooleanExtra("openNotes", false)) openNotes();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (web != null) web.evaluateJavascript("window.render && window.render()", null);
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -59,7 +79,13 @@ public class MainActivity extends Activity {
         s.setAllowFileAccess(true);
         s.setTextZoom(100);
 
-        web.setWebViewClient(new WebViewClient());
+        web.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                if (pendingOpenNotes) { pendingOpenNotes = false; openNotes(); }
+            }
+        });
+        pendingOpenNotes = getIntent() != null && getIntent().getBooleanExtra("openNotes", false);
         web.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
@@ -206,6 +232,40 @@ public class MainActivity extends Activity {
     }
 
     private class Bridge {
+        @JavascriptInterface
+        public void syncAlarms(String json) {
+            Alarms.sync(getApplicationContext(), json);
+        }
+
+        @JavascriptInterface
+        public String notifStatus() {
+            if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) return "off";
+            if (Build.VERSION.SDK_INT >= 24) {
+                NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+                if (!nm.areNotificationsEnabled()) return "off";
+            }
+            return "ok";
+        }
+
+        @JavascriptInterface
+        public void requestNotif() {
+            runOnUiThread(() -> {
+                if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 77);
+                } else {
+                    Intent i = new Intent();
+                    if (Build.VERSION.SDK_INT >= 26) {
+                        i.setAction(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS);
+                        i.putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName());
+                    } else {
+                        i.setAction(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                        i.setData(Uri.parse("package:" + getPackageName()));
+                    }
+                    try { startActivity(i); } catch (Exception ignored) {}
+                }
+            });
+        }
+
         @JavascriptInterface
         public void makePdf(final String html, final String name, final String action) {
             runOnUiThread(() -> startPdf(html, name, action));
