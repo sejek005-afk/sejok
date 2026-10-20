@@ -21,13 +21,15 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Download Persian font (Vazirmatn)
+      - name: Download Persian fonts (Vazirmatn, Lalezar)
         continue-on-error: true
         run: |
           curl -fsSL -o app/src/main/assets/Vazirmatn.woff2 \
             https://cdn.jsdelivr.net/npm/vazirmatn@33.0.3/fonts/webfonts/Vazirmatn%5Bwght%5D.woff2 \
           || curl -fsSL -o app/src/main/assets/Vazirmatn.woff2 \
             "https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/fonts/webfonts/Vazirmatn%5Bwght%5D.woff2"
+          curl -fsSL -o app/src/main/assets/Lalezar.ttf \
+            https://raw.githubusercontent.com/google/fonts/main/ofl/lalezar/Lalezar-Regular.ttf || true
           ls -la app/src/main/assets/
 
       - name: Build APK

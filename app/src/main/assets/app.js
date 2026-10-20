@@ -33,6 +33,32 @@ function money(n, cls) {
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function sum(arr, f) { let s = 0; for (const x of arr) s += f(x) || 0; return s; }
 
+// آیکون‌های اختصاصی (خطی ۲۴×۲۴)
+const ICONS = {
+  site: '<path d="M3 21h18"/><path d="M5 21V8l6-3v16"/><path d="M11 10h7v11"/><path d="M8 10h.01M8 13h.01M8 16h.01M14 13h1M14 16h1"/><path d="M15 3h6M19 3v4"/>',
+  helmet: '<path d="M4 16a8 8 0 0 1 16 0"/><path d="M2.5 16h19v2.5h-19z"/><path d="M10 8.3V12M14 8.3V12"/><path d="M12 8v-.5"/>',
+  ruler: '<path d="M3.5 16.5 16.5 3.5l4 4-13 13z"/><path d="M7.5 12.5l1.8 1.8M10 10l1.2 1.2M12.5 7.5l1.8 1.8M15 5l1.2 1.2"/>',
+  wallet: '<path d="M4 7h15a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8"/><path d="M3 8a2 2 0 0 1 2-2h11V4"/><path d="M16 13.5h2"/>',
+  chart: '<path d="M3 21h18"/><path d="M6 21v-7M11 21V5M16 21v-10M21 21v-4"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>',
+  edit: '<path d="M4 20l4.5-1L19 8.5 15.5 5 5 15.5z"/><path d="M13.5 7l3.5 3.5"/>',
+  back: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  x: '<path d="M6 6l12 12M18 6 6 18"/>',
+  layers: '<path d="M12 3 21 8l-9 5-9-5z"/><path d="M3 12.5l9 5 9-5"/><path d="M3 16.5l9 5 9-5"/>',
+  pin: '<path d="M12 21s-6.5-6-6.5-11a6.5 6.5 0 0 1 13 0c0 5-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/>',
+  phone: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>',
+  clip: '<path d="M9 3h6v3H9z"/><path d="M7 4.5H5V21h14V4.5h-2"/><path d="M8.5 13.5l2.5 2.5 4.5-5"/>',
+  tape: '<rect x="2.5" y="6" width="13" height="13" rx="3"/><circle cx="9" cy="12.5" r="2.5"/><path d="M15.5 15.5h6v3.5h-6"/><path d="M18 15.5v1.5M20 15.5v1.5"/>',
+  in: '<path d="M12 4v13M6 11l6 6 6-6"/><path d="M5 20h14"/>',
+  out: '<path d="M12 20V7M6 13l6-6 6 6"/><path d="M5 4h14"/>',
+  cal: '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+  box: '<path d="M3 8l9-5 9 5v8l-9 5-9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/>',
+  coins: '<ellipse cx="9" cy="7" rx="6" ry="3"/><path d="M3 7v5c0 1.7 2.7 3 6 3s6-1.3 6-3V7"/><path d="M9 15v3c0 1.7 2.7 3 6 3s6-1.3 6-3v-5c0-1.6-2.4-2.9-5.5-3"/>',
+};
+function ic(n) { return `<svg class="i" viewBox="0 0 24 24">${ICONS[n] || ''}</svg>`; }
+function tape(pct) { return `<div class="tape"><i class="${pct >= 100 ? 'full' : ''}" style="width:${pct}%"></i><em>${faNum(Math.round(pct))}٪</em></div>`; }
+
 // تاریخ (ذخیره به صورت رشته شمسی 1405/07/28)
 function p2(n) { return (n < 10 ? '0' : '') + n; }
 function jdnToJ(n) { const r = J.d2j(n); return `${r.jy}/${p2(r.jm)}/${p2(r.jd)}`; }
@@ -187,7 +213,7 @@ function fieldInput(f) {
 }
 function openForm(title, fields, cb, delCb) {
   formFields = fields; formCb = cb; formDelCb = delCb || null;
-  let h = `<div class="sheet"><div class="sh-head"><b>${esc(title)}</b><button class="x" onclick="closeModal()">✕</button></div><div class="sh-body">`;
+  let h = `<div class="sheet"><div class="sh-head"><b>${esc(title)}</b><button class="x" onclick="closeModal()">${ic('x')}</button></div><div class="sh-body">`;
   for (const f of fields) h += `<label class="fld" data-k="${f.k}">${esc(f.label)}${fieldInput(f)}${f.hint ? `<div class="mut" style="margin-top:4px">${esc(f.hint)}</div>` : ''}</label>`;
   h += `</div><div class="sh-foot"><button class="btn pri" onclick="submitForm()">ذخیره</button>${delCb ? '<button class="btn danger" onclick="formDel()">حذف</button>' : ''}</div></div>`;
   showModal(h);
@@ -243,7 +269,7 @@ function askConfirm(msg, cb) {
   <div class="sh-foot"><button class="btn danger" onclick="const c=window._confirmCb;closeModal();c()">بله</button><button class="btn" onclick="closeModal()">انصراف</button></div></div>`);
 }
 function info(title, html) {
-  showModal(`<div class="sheet"><div class="sh-head"><b>${esc(title)}</b><button class="x" onclick="closeModal()">✕</button></div><div class="sh-body">${html}</div><div class="sh-foot"><button class="btn pri" onclick="closeModal()">باشه</button></div></div>`);
+  showModal(`<div class="sheet"><div class="sh-head"><b>${esc(title)}</b><button class="x" onclick="closeModal()">${ic('x')}</button></div><div class="sh-body">${html}</div><div class="sh-foot"><button class="btn pri" onclick="closeModal()">باشه</button></div></div>`);
 }
 
 const projOpts = (none) => (none ? [['', none]] : []).concat(DB.projects.map(p => [p.id, `${p.name} (${(cat(p.catId) || {}).name || ''})`]));
@@ -458,7 +484,7 @@ function pickWorkerToProject(pid) {
 }
 
 // ===================== نمایش‌ها =====================
-function empty(msg) { return `<div class="empty">${msg}</div>`; }
+function empty(msg, icon, title) { return `<div class="empty">${icon ? ic(icon) : ''}${title ? `<b>${title}</b>` : ''}${msg}</div>`; }
 function txRow(t, show) {
   let who = '';
   if (t.type === 'wpay') who = 'شاگرد: ' + wname(t.workerId);
@@ -468,7 +494,7 @@ function txRow(t, show) {
   if (show !== 'contr' && t.contractorId) parts.push('پیمانکار: ' + cname(t.contractorId));
   if (show !== 'target' && who) parts.push(who);
   const sign = t.type === 'in' ? '+' : '−';
-  return `<div class="tx" onclick="txForm(${t.id})"><div class="d"><div>${TXT[t.type]}${t.note ? ' — ' + esc(t.note) : ''}</div><div class="mut">${esc(parts.join(' · '))}</div></div>
+  return `<div class="tx" onclick="txForm(${t.id})"><span class="dot ${t.type === 'in' ? 'in' : 'out'}">${ic(t.type === 'in' ? 'in' : 'out')}</span><div class="d"><div>${TXT[t.type]}${t.note ? ' — ' + esc(t.note) : ''}</div><div class="mut">${esc(parts.join(' · '))}</div></div>
     <div class="a ${t.type === 'in' ? 'pos' : 'neg'}">${sign} ${Math.round(t.amount).toLocaleString('fa-IR')}</div></div>`;
 }
 const byDateDesc = (a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id;
@@ -478,16 +504,20 @@ const V = {};
 V.home = () => {
   const t = todayJ(); const ym = t.slice(0, 7);
   const m = agg(d => d.startsWith(ym), null);
-  let h = `<div class="card hero"><div class="mut">امروز ${dayName(t)}</div><div class="big">${showDate(t)}</div>
-    <div class="mut" style="margin-top:6px">خالص کارکرد ${MN[+t.slice(5, 7) - 1]}: <b style="color:#fff">${Math.round(m.net).toLocaleString('fa-IR')} تومان</b></div></div>`;
-  h += `<div class="sec">دسته‌ها</div>`;
-  if (!DB.cats.length) h += empty('هنوز دسته‌ای ندارید.<br>با دکمه + یک دسته (مثلاً «کناف») بسازید.');
+  const present = Object.keys(DB.att).filter(k => k.endsWith('|' + t) && DB.att[k].s === 'p').length;
+  const todayM = agg(d => d === t, null).meters;
+  let h = `<div class="diary"><div class="wd">${dayName(t)}</div><div class="date">${showDate(t)}</div>
+    <div class="row2"><div class="st"><small>شاگرد حاضر امروز</small><b>${faDigits(present)} نفر</b></div>
+    <div class="st"><small>کار امروز</small><b>${faNum(todayM)} متر</b></div>
+    <div class="st"><small>خالص ${MN[+t.slice(5, 7) - 1]}</small><b class="${m.net < 0 ? 'neg' : ''}">${short(m.net)}<span style="font-size:11px;font-weight:400"> هزار</span></b></div></div></div>`;
+  h += `<div class="sec">دسته‌های کاری</div>`;
+  if (!DB.cats.length) h += empty('با دکمه + اولین دسته را بسازید؛ مثلاً «کناف» یا «سقف کاذب».', 'layers', 'هنوز دسته‌ای ندارید');
   for (const c of DB.cats) {
     const ps = DB.projects.filter(p => p.catId === c.id);
     const a = agg(ALL, new Set(ps.map(p => p.id)));
-    h += `<div class="card click" onclick="go('cat',{id:${c.id}})"><div class="ct"><b>${esc(c.name)}</b>
-      <button class="ic" onclick="event.stopPropagation();catForm(${c.id})">✎</button></div>
-      <div class="mut">${faDigits(ps.length)} پروژه · خالص کل: ${money(a.net, 1)}</div></div>`;
+    h += `<div class="card click" onclick="go('cat',{id:${c.id}})"><div class="ct"><span class="tile">${ic('layers')}</span>
+      <div style="flex:1;min-width:0"><b style="font-size:16px">${esc(c.name)}</b><div class="mut">${faDigits(ps.length)} پروژه · ${faNum(a.meters)} متر کار</div></div>
+      <div class="v">${money(a.net, 1)}<small>خالص کل</small></div></div></div>`;
   }
   return { title: 'حسابداری پیمانکاری', html: h, fab: 'catForm()', settings: true };
 };
@@ -497,14 +527,14 @@ V.cat = r => {
   const c = cat(r.id); if (!c) { stack.pop(); return V[cur().name](cur()); }
   const ps = DB.projects.filter(p => p.catId === c.id);
   let h = '';
-  if (!ps.length) h += empty('پروژه‌ای در این دسته نیست.<br>با دکمه + پروژه اضافه کنید.');
+  if (!ps.length) h += empty('با دکمه + پروژه اضافه کنید و متراژ و قیمت‌ها را وارد کنید.', 'site', 'پروژه‌ای در این دسته نیست');
   for (const p of ps) {
     const a = agg(ALL, new Set([p.id]));
     const pct = p.area > 0 ? Math.min(100, a.meters / p.area * 100) : 0;
-    h += `<div class="card click" onclick="go('project',{id:${p.id}})"><div class="ct"><b>${esc(p.name)}</b><span class="badge">${p.type === 'labor' ? 'اجرتی' : 'با متریال'}</span></div>
-      ${p.address ? `<div class="mut">📍 ${esc(p.address)}</div>` : ''}
-      <div class="bar"><i style="width:${pct}%"></i></div>
-      <div class="mut">${faNum(a.meters)} از ${faNum(p.area || 0)} متر (${faNum(Math.round(pct))}٪) · خالص: ${money(a.net, 1)}</div></div>`;
+    h += `<div class="card click" onclick="go('project',{id:${p.id}})"><div class="ct"><b>${esc(p.name)}</b><span class="badge ${p.type === 'labor' ? '' : 'y'}">${p.type === 'labor' ? 'اجرتی' : 'با متریال'}</span></div>
+      ${p.address ? `<div class="meta"><span>${ic('pin')}${esc(p.address)}</span></div>` : ''}
+      ${tape(pct)}
+      <div class="hl"><span class="mut">${faNum(a.meters)} از ${faNum(p.area || 0)} متر</span><span>${money(a.net, 1)}</span></div></div>`;
   }
   return { title: c.name, html: h, fab: `projectForm(null,${c.id})`, edit: `catForm(${c.id})` };
 };
@@ -519,9 +549,9 @@ V.project = r => {
   if (sub === 'sum') {
     const a = agg(ALL, S);
     const pct = p.area > 0 ? Math.min(100, a.meters / p.area * 100) : 0;
-    h += `<div class="card"><div class="ct"><b>پیشرفت</b><span class="badge ok">${faNum(Math.round(pct))}٪</span></div>
-      <div class="bar"><i style="width:${pct}%"></i></div>
-      <div class="mut">${faNum(a.meters)} متر انجام‌شده از ${faNum(p.area || 0)} متر · باقی‌مانده ${faNum(Math.max(0, (p.area || 0) - a.meters))} متر</div></div>`;
+    h += `<div class="card"><div class="hl"><div><div class="mut">انجام‌شده</div><div class="big">${faNum(a.meters)} <span style="font-size:15px">متر</span></div></div>
+      <div style="text-align:left"><div class="mut">باقی‌مانده</div><b>${faNum(Math.max(0, (p.area || 0) - a.meters))} متر</b></div></div>
+      ${tape(pct)}<div class="mut">از متراژ کل ${faNum(p.area || 0)} متر مربع</div></div>`;
     h += `<div class="card">${breakdown(a, p)}</div>`;
     h += `<div class="card"><div class="ct"><b>اطلاعات پروژه</b><button class="btn sm" onclick="projectForm(${p.id})">ویرایش</button></div>
       ${p.address ? `<div class="kv"><span>آدرس</span><span>${esc(p.address)}</span></div>` : ''}
@@ -535,25 +565,25 @@ V.project = r => {
       <div class="kv"><span>مبلغ کل قرارداد</span><span>${money((p.area || 0) * rate(p))}</span></div></div>`;
   }
   if (sub === 'prog') {
-    h += `<button class="btn pri wide" onclick="progressForm(${p.id})">+ ثبت پیشرفت کار امروز</button>`;
+    h += `<button class="btn pri wide" onclick="progressForm(${p.id})">${ic('tape')} ثبت پیشرفت کار امروز</button>`;
     const entries = DB.progress.filter(e => e.projectId === p.id).sort(byDateDesc);
     const dates = [...new Set(entries.map(e => e.date))];
-    if (!dates.length) h += empty('هنوز پیشرفتی ثبت نشده.');
+    if (!dates.length) h += empty('متراژ کار هر روز را ثبت کنید تا خالص کارکرد آن روز حساب شود.', 'tape', 'هنوز پیشرفتی ثبت نشده');
     for (const d of dates) {
       const a = agg(x => x === d, S);
       h += `<div class="card"><div class="ct"><b>${showDate(d)}</b><span class="badge">${dayName(d)}</span></div>`;
       for (const e of entries.filter(x => x.date === d)) {
-        h += `<div class="tx" onclick="progressForm(${p.id},${e.id})"><div class="d"><div>${faNum(e.meters)} متر${e.note ? ' — ' + esc(e.note) : ''}</div>
-          ${e.installerId ? `<div class="mut">نصاب: ${esc(iname(e.installerId))} (${faNum(e.instMeters)} متر)</div>` : ''}</div><span class="mut">✎</span></div>`;
+        h += `<div class="tx" onclick="progressForm(${p.id},${e.id})"><span class="dot" style="background:var(--yellow-soft);color:#8A6400">${ic('tape')}</span><div class="d"><div><b>${faNum(e.meters)} متر</b>${e.note ? ' — ' + esc(e.note) : ''}</div>
+          ${e.installerId ? `<div class="mut">نصاب: ${esc(iname(e.installerId))} (${faNum(e.instMeters)} متر)</div>` : ''}</div><span class="mut">${ic('edit')}</span></div>`;
       }
       h += `<div style="margin-top:6px">${breakdown(a, p)}</div></div>`;
     }
   }
   if (sub === 'work') {
-    h += `<div class="row" style="margin-bottom:10px"><button class="btn pri" style="flex:1" onclick="workerForm(null,${p.id})">+ شاگرد جدید</button><button class="btn" style="flex:1" onclick="pickWorkerToProject(${p.id})">⇄ انتقال شاگرد</button></div>`;
+    h += `<div class="row" style="margin-bottom:12px"><button class="btn pri" style="flex:1" onclick="workerForm(null,${p.id})">${ic('plus')} شاگرد جدید</button><button class="btn dark" style="flex:1" onclick="pickWorkerToProject(${p.id})">${ic('helmet')} انتقال شاگرد</button></div>`;
     const ws = DB.workers.filter(w => w.projectId === p.id);
     const t = todayJ();
-    if (!ws.length) h += empty('شاگردی در این پروژه نیست.');
+    if (!ws.length) h += empty('شاگرد جدید اضافه کنید یا از پروژه‌های دیگر منتقل کنید.', 'helmet', 'شاگردی در این پروژه نیست');
     else h += `<div class="card">${ws.map(w => attRow(w, t)).join('')}</div>`;
     const a = agg(ALL, S);
     h += `<div class="card"><div class="kv"><span>کل نفر‌روز کارکرد در این پروژه</span><span>${faNum(a.wdays)}</span></div><div class="kv"><span>جمع دستمزد شاگردها</span><span>${money(a.workers)}</span></div></div>`;
@@ -561,7 +591,7 @@ V.project = r => {
   if (sub === 'extra') {
     const xs = DB.tx.filter(t => t.type === 'extra' && t.projectId === p.id).sort(byDateDesc);
     h += `<div class="card"><div class="kv total" style="border:0;margin:0;padding:0"><span>جمع هزینه‌های مازاد</span><span>${money(sum(xs, t => t.amount))}</span></div></div>`;
-    if (!xs.length) h += empty('هزینه مازادی ثبت نشده.');
+    if (!xs.length) h += empty('کرایه، ابزار، غذا و هر خرج دیگری را با دکمه + ثبت کنید.', 'coins', 'هزینه مازادی ثبت نشده');
     else h += `<div class="card">${xs.map(t => txRow(t, 'target')).join('')}</div>`;
     fab = `txForm(null,{type:'extra',projectId:${p.id}})`;
   }
@@ -572,24 +602,22 @@ function attRow(w, date, withProject) {
   const a = DB.att[w.id + '|' + date];
   const s = a ? a.s : '';
   const pid = (a && a.p) || w.projectId || '';
-  return `<div class="att"><div class="n" onclick="go('worker',{id:${w.id}})"><div>${esc(fullName(w))} ${w.active ? '<span class="badge ok">فعال</span>' : ''}</div>
-    <div class="mut">${withProject ? '' : 'امروز: '}${s === 'p' ? 'حاضر' : s === 'a' ? 'غایب' : 'ثبت نشده'}</div></div>
-    <button class="sb ${s === 'p' ? 'p' : ''}" onclick="setAtt(${w.id},'${date}','p')">حاضر</button>
-    <button class="sb ${s === 'a' ? 'a' : ''}" onclick="setAtt(${w.id},'${date}','a')">غایب</button>
+  return `<div class="att"><div class="n" onclick="go('worker',{id:${w.id}})"><span class="av ${w.active ? 'on' : ''}">${ic('helmet')}</span><div><div>${esc(fullName(w))}</div>
+    <div class="mut">${w.active ? 'حضور خودکار' : 'غیرفعال'}</div></div></div>
+    <span class="seg"><button class="sb ${s === 'p' ? 'p' : ''}" onclick="setAtt(${w.id},'${date}','p')">حاضر</button><button class="sb ${s === 'a' ? 'a' : ''}" onclick="setAtt(${w.id},'${date}','a')">غایب</button></span>
     ${withProject ? `<select class="ps" onchange="setAtt(${w.id},'${date}','p',this.value)">${projOpts('— پروژه —').map(o => `<option value="${o[0]}" ${String(o[0]) === String(pid) ? 'selected' : ''}>${esc(o[1])}</option>`).join('')}</select>` : ''}</div>`;
 }
 
 V.workers = () => {
-  let h = `<button class="btn pri wide" onclick="go('attendance',{date:todayJ()})">📋 حضور و غیاب روزانه</button>`;
-  if (!DB.workers.length) h += empty('شاگردی ثبت نشده.<br>با دکمه + شاگرد اضافه کنید.');
+  let h = `<button class="btn dark wide" onclick="go('attendance',{date:todayJ()})">${ic('clip')} حضور و غیاب روزانه</button>`;
+  if (!DB.workers.length) h += empty('با دکمه + شاگرد اضافه کنید؛ نام، محل سکونت و دستمزد روزانه.', 'helmet', 'شاگردی ثبت نشده');
   const list = DB.workers.slice().sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0));
-  for (const w of list) {
+  if (list.length) h += '<div class="list">' + list.map(w => {
     const s = workerStats(w);
-    h += `<div class="card click" onclick="go('worker',{id:${w.id}})"><div class="ct"><b>${esc(fullName(w))}</b>
-      <span class="badge ${w.active ? 'ok' : ''}">${w.active ? 'فعال' : 'غیرفعال'}</span></div>
-      <div class="mut">${w.projectId ? '🏗 ' + esc(pname(w.projectId)) + ' · ' : ''}دستمزد روزانه ${Math.round(w.wage || 0).toLocaleString('fa-IR')}</div>
-      <div class="mut">${faDigits(s.days)} روز کارکرد · طلب تا امروز: ${money(s.bal, 1)}</div></div>`;
-  }
+    return `<div class="li" onclick="go('worker',{id:${w.id}})"><span class="av ${w.active ? 'on' : ''}">${ic('helmet')}</span>
+      <div class="d"><b>${esc(fullName(w))}</b><div class="mut">${w.projectId ? esc(pname(w.projectId)) : 'بدون پروژه'} · ${faDigits(s.days)} روز</div></div>
+      <div class="v">${money(s.bal, 1)}<small>طلب تا امروز</small></div></div>`;
+  }).join('') + '</div>';
   return { title: 'شاگردها', html: h, fab: 'workerForm()' };
 };
 
@@ -651,12 +679,13 @@ V.attendance = r => {
 
 V.installers = () => {
   let h = '';
-  if (!DB.installers.length) h += empty('نصاب متری ثبت نشده.<br>با دکمه + اضافه کنید.');
-  for (const i of DB.installers) {
+  if (!DB.installers.length) h += empty('نصاب‌هایی که متری کار می‌کنند را با دکمه + اضافه کنید.', 'ruler', 'نصاب متری ثبت نشده');
+  else h += '<div class="list">' + DB.installers.map(i => {
     const s = instStats(i);
-    h += `<div class="card click" onclick="go('installer',{id:${i.id}})"><div class="ct"><b>${esc(fullName(i))}</b><span class="badge">${Math.round(i.rate || 0).toLocaleString('fa-IR')} / متر</span></div>
-      <div class="mut">${faNum(s.meters)} متر کار · طلب تا امروز: ${money(s.bal, 1)}</div></div>`;
-  }
+    return `<div class="li" onclick="go('installer',{id:${i.id}})"><span class="av sq on">${ic('ruler')}</span>
+      <div class="d"><b>${esc(fullName(i))}</b><div class="mut">${Math.round(i.rate || 0).toLocaleString('fa-IR')} تومان هر متر · ${faNum(s.meters)} متر کار</div></div>
+      <div class="v">${money(s.bal, 1)}<small>طلب تا امروز</small></div></div>`;
+  }).join('') + '</div>';
   return { title: 'نصاب‌های متری', html: h, fab: 'installerForm()' };
 };
 
@@ -680,13 +709,13 @@ V.installer = r => {
 
 V.contractors = () => {
   let h = '';
-  if (!DB.contractors.length) h += empty('پیمانکاری ثبت نشده.<br>با دکمه + اضافه کنید.');
-  for (const c of DB.contractors) {
+  if (!DB.contractors.length) h += empty('پیمانکار اضافه کنید تا دریافتی‌ها و خرج‌کردهایش را ثبت کنید.', 'wallet', 'پیمانکاری ثبت نشده');
+  else h += '<div class="list">' + DB.contractors.map(c => {
     const s = contrStats(c);
-    h += `<div class="card click" onclick="go('contractor',{id:${c.id}})"><div class="ct"><b>${esc(fullName(c))}</b></div>
-      <div class="mut">دریافتی ${Math.round(s.inc).toLocaleString('fa-IR')} · خرج‌کرد ${Math.round(s.out).toLocaleString('fa-IR')}</div>
-      <div class="mut">مانده: ${money(s.bal, 1)}</div></div>`;
-  }
+    return `<div class="li" onclick="go('contractor',{id:${c.id}})"><span class="av sq on">${ic('wallet')}</span>
+      <div class="d"><b>${esc(fullName(c))}</b><div class="mut">دریافتی ${short(s.inc)} · خرج ${short(s.out)} هزار</div></div>
+      <div class="v">${money(s.bal, 1)}<small>مانده</small></div></div>`;
+  }).join('') + '</div>';
   return { title: 'پیمانکاران', html: h, fab: 'contractorForm()' };
 };
 
@@ -698,7 +727,7 @@ V.contractor = r => {
     <div class="kv"><span>پرداخت به نصاب‌ها</span><span>${money(sum(s.txs.filter(t => t.type === 'ipay'), t => t.amount))}</span></div>
     <div class="kv"><span>هزینه‌های مازاد</span><span>${money(sum(s.txs.filter(t => t.type === 'extra'), t => t.amount))}</span></div>
     <div class="kv total"><span>مانده (دریافتی − خرج‌کرد)</span><span>${money(s.bal, 1)}</span></div></div>`;
-  h += `<div class="row" style="margin-bottom:10px"><button class="btn pri" style="flex:1" onclick="txForm(null,{contractorId:${c.id},type:'in'})">+ ثبت دریافتی</button><button class="btn" style="flex:1" onclick="txForm(null,{contractorId:${c.id}})">− ثبت خرج‌کرد</button></div>`;
+  h += `<div class="row" style="margin-bottom:12px"><button class="btn pri" style="flex:1" onclick="txForm(null,{contractorId:${c.id},type:'in'})">${ic('in')} ثبت دریافتی</button><button class="btn dark" style="flex:1" onclick="txForm(null,{contractorId:${c.id}})">${ic('out')} ثبت خرج‌کرد</button></div>`;
   const txs = s.txs.slice().sort(byDateDesc);
   h += `<div class="card">${txs.length ? txs.map(t => txRow(t, 'contr')).join('') : '<div class="mut">تراکنشی ثبت نشده</div>'}</div>`;
   return { title: fullName(c), html: h, edit: `contractorForm(${c.id})` };
@@ -718,7 +747,7 @@ V.chart = r => {
     ${chartSvg(rows)}
     <div class="legend"><span><i style="background:var(--c1)"></i>درآمد خالص</span><span><i style="background:var(--c2)"></i>هزینه شاگرد و نصاب</span><span><i style="background:var(--c3)"></i>هزینه مازاد</span></div></div>`;
   h += `<div class="card scroll-x"><table class="mt"><tr><th>ماه</th><th>درآمد</th><th>شاگرد/نصاب</th><th>مازاد</th><th>خالص</th></tr>
-    ${rows.map(x => `<tr><td>${MN[x.m - 1]}</td><td>${short(x.rev)}</td><td>${short(x.labor)}</td><td>${short(x.extra)}</td><td class="${x.net < 0 ? 'neg' : x.net > 0 ? 'pos' : ''}">${short(x.net)}</td></tr>`).join('')}
+    ${rows.map(x => `<tr class="${y === ty && x.m === +todayJ().slice(5, 7) ? 'cur' : ''}"><td>${MN[x.m - 1]}</td><td>${short(x.rev)}</td><td>${short(x.labor)}</td><td>${short(x.extra)}</td><td class="${x.net < 0 ? 'neg' : x.net > 0 ? 'pos' : ''}">${short(x.net)}</td></tr>`).join('')}
     <tr class="tot"><td>جمع</td><td>${short(tot('rev'))}</td><td>${short(tot('labor'))}</td><td>${short(tot('extra'))}</td><td class="${tot('net') < 0 ? 'neg' : 'pos'}">${short(tot('net'))}</td></tr></table>
     <div class="mut" style="margin-top:8px">ارقام به هزار تومان. خالص = درآمد − متریال مصرفی − دستمزد شاگرد و نصاب − هزینه مازاد. (متریال مصرفی سال: ${money(tot('mat'))})</div></div>`;
   return { title: 'نمودار ماهیانه', html: h };
@@ -748,11 +777,11 @@ function chartSvg(rows) {
 V.settings = () => {
   const n = DB.projects.length, w = DB.workers.length;
   let h = `<div class="card"><b>پشتیبان‌گیری</b><div class="mut" style="margin:4px 0 10px">اطلاعات فقط روی همین گوشی ذخیره می‌شود. برای جلوگیری از گم شدن اطلاعات (مثلاً هنگام عوض کردن گوشی)، هر چند وقت یک بار فایل پشتیبان بگیرید.</div>
-    <button class="btn pri wide" onclick="exportData()">⬇ ذخیره فایل پشتیبان</button>
-    <label class="btn wide" style="display:block;text-align:center">⬆ بازیابی از فایل پشتیبان<input type="file" accept=".json,application/json,text/plain,*/*" style="display:none" onchange="importData(this)"></label></div>
+    <button class="btn pri wide" onclick="exportData()">${ic('out')} ذخیره فایل پشتیبان</button>
+    <label class="btn dark wide">${ic('in')} بازیابی از فایل پشتیبان<input type="file" accept=".json,application/json,text/plain,*/*" style="display:none" onchange="importData(this)"></label></div>
     <div class="card"><div class="kv"><span>دسته‌ها</span><span>${faDigits(DB.cats.length)}</span></div><div class="kv"><span>پروژه‌ها</span><span>${faDigits(n)}</span></div><div class="kv"><span>شاگردها</span><span>${faDigits(w)}</span></div><div class="kv"><span>نصاب‌ها</span><span>${faDigits(DB.installers.length)}</span></div><div class="kv"><span>پیمانکاران</span><span>${faDigits(DB.contractors.length)}</span></div></div>
     <div class="card"><button class="btn danger wide" style="margin:0" onclick="askConfirm('همه اطلاعات برنامه پاک شود؟ این کار قابل بازگشت نیست.',()=>askConfirm('واقعاً مطمئن هستید؟',()=>{DB=fix({});save();tab('home')}))">پاک کردن همه اطلاعات</button></div>
-    <div class="mut" style="text-align:center">نسخه ۱٫۰</div>`;
+    <div class="mut" style="text-align:center">نسخه ۱٫۱</div>`;
   return { title: 'تنظیمات', html: h };
 };
 
@@ -784,20 +813,21 @@ function importData(input) {
 }
 
 // ===================== رندر =====================
-const NAV = [['home', '🏠', 'پروژه‌ها'], ['workers', '👷', 'شاگردها'], ['installers', '📐', 'نصاب‌ها'], ['contractors', '🤝', 'پیمانکاران'], ['chart', '📊', 'نمودار']];
+const NAV = [['home', 'site', 'پروژه‌ها'], ['workers', 'helmet', 'شاگردها'], ['installers', 'ruler', 'نصاب‌ها'], ['contractors', 'wallet', 'پیمانکاران'], ['chart', 'chart', 'نمودار']];
 const ROOT = { home: 'home', cat: 'home', project: 'home', settings: 'home', workers: 'workers', worker: 'workers', attendance: 'workers', installers: 'installers', installer: 'installers', contractors: 'contractors', contractor: 'contractors', chart: 'chart' };
 function render() {
   const r = cur();
   const v = V[r.name](r);
   const rr = cur();
   const canBack = stack.length > 1;
-  document.getElementById('hdr').innerHTML = `${canBack ? '<button onclick="back()">→</button>' : ''}<h1>${esc(v.title)}</h1>
-    ${v.edit ? `<button onclick="${v.edit}" title="ویرایش">✎</button>` : ''}${v.settings ? `<button onclick="go('settings')" title="تنظیمات">⚙</button>` : ''}`;
+  document.getElementById('hdr').innerHTML = `${canBack ? `<button onclick="back()" aria-label="بازگشت">${ic('back')}</button>` : ''}<h1>${esc(v.title)}</h1>
+    ${v.edit ? `<button onclick="${v.edit}" aria-label="ویرایش">${ic('edit')}</button>` : ''}${v.settings ? `<button onclick="go('settings')" aria-label="تنظیمات">${ic('gear')}</button>` : ''}`;
   document.getElementById('main').innerHTML = v.html;
   const fab = document.getElementById('fab');
+  fab.innerHTML = ic('plus');
   if (v.fab) { fab.style.display = ''; fab.setAttribute('onclick', v.fab); } else fab.style.display = 'none';
   const root = ROOT[(stack[0] || rr).name];
-  document.getElementById('nav').innerHTML = NAV.map(n => `<button class="${root === n[0] ? 'on' : ''}" onclick="tab('${n[0]}')"><span class="i">${n[1]}</span>${n[2]}</button>`).join('');
+  document.getElementById('nav').innerHTML = NAV.map(n => `<button class="${root === n[0] ? 'on' : ''}" onclick="tab('${n[0]}')">${ic(n[1])}${n[2]}</button>`).join('');
 }
 
 syncAtt();
