@@ -10,8 +10,8 @@ android {
         applicationId 'ir.sejok.contractor'
         minSdk 21
         targetSdk 34
-        versionCode 7
-        versionName '1.6'
+        versionCode 8
+        versionName '1.7'
     }
 
     // کلید ثابت تا نسخه‌های بعدی بدون حذف برنامه (و بدون از دست رفتن اطلاعات) نصب شوند

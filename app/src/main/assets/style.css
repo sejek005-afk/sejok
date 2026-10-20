@@ -82,7 +82,7 @@ main { padding: 14px; max-width: 720px; margin: 0 auto; }
 
 /* زیرتب‌ها */
 .tabs { display: flex; gap: 2px; overflow-x: auto; margin: -14px -14px 14px; padding: 0 10px; background: var(--card); border-bottom: 1px solid var(--line); }
-.tabs button { flex: 1; white-space: nowrap; border: 0; background: none; padding: 12px 8px 10px; color: var(--mut); font-size: 14px; border-bottom: 3px solid transparent; }
+.tabs button { flex: 1 0 auto; white-space: nowrap; border: 0; background: none; padding: 12px 8px 10px; color: var(--mut); font-size: 14px; border-bottom: 3px solid transparent; }
 .tabs button.on { color: var(--ink); font-weight: 800; border-bottom-color: var(--yellow); }
 
 .badge { font-size: 11.5px; padding: 2px 9px; border-radius: 20px; background: var(--paper); color: var(--mut); white-space: nowrap; font-weight: 600; }

@@ -12,6 +12,7 @@ function fix(d) {
   d.notes = Array.isArray(d.notes) ? d.notes : [];
   d.adj = Array.isArray(d.adj) ? d.adj : [];
   d.cheques = Array.isArray(d.cheques) ? d.cheques : [];
+  d.statements = Array.isArray(d.statements) ? d.statements : [];
   for (const inv of d.invoices) {
     if (!Array.isArray(inv.pays)) inv.pays = [];
     if (inv.cash > 0) inv.pays.push({ id: d.seq++, date: inv.date, amount: inv.cash, method: 'cash', note: '' });
@@ -594,7 +595,7 @@ V.project = r => {
   const p = proj(r.id); if (!p) { stack.pop(); return V[cur().name](cur()); }
   const sub = r.sub || 'sum';
   const S = new Set([p.id]);
-  const tabs = [['sum', 'خلاصه'], ['prog', 'پیشرفت کار'], ['work', 'شاگردها'], ['extra', 'هزینه مازاد']];
+  const tabs = [['sum', 'خلاصه'], ['prog', 'پیشرفت کار'], ['stmt', 'صورت‌وضعیت'], ['work', 'شاگردها'], ['extra', 'هزینه مازاد']];
   let h = `<div class="tabs">${tabs.map(t => `<button class="${sub === t[0] ? 'on' : ''}" onclick="setSub('sub','${t[0]}')">${t[1]}</button>`).join('')}</div>`;
   let fab = null;
   if (sub === 'sum') {
@@ -631,6 +632,7 @@ V.project = r => {
       h += `<div style="margin-top:6px">${breakdown(a, p)}</div></div>`;
     }
   }
+  if (sub === 'stmt' && window.stmtListHtml) h += stmtListHtml(p);
   if (sub === 'work') {
     h += `<div class="row" style="margin-bottom:12px"><button class="btn pri" style="flex:1" onclick="workerForm(null,${p.id})">${ic('plus')} شاگرد جدید</button><button class="btn dark" style="flex:1" onclick="pickWorkerToProject(${p.id})">${ic('helmet')} انتقال شاگرد</button></div>`;
     const ws = DB.workers.filter(w => w.projectId === p.id);
@@ -937,7 +939,7 @@ V.settings = () => {
     <label class="btn dark wide">${ic('in')} بازیابی از فایل پشتیبان<input type="file" accept=".json,application/json,text/plain,*/*" style="display:none" onchange="importData(this)"></label></div>
     <div class="card"><div class="kv"><span>دسته‌ها</span><span>${faDigits(DB.cats.length)}</span></div><div class="kv"><span>پروژه‌ها</span><span>${faDigits(n)}</span></div><div class="kv"><span>شاگردها</span><span>${faDigits(w)}</span></div><div class="kv"><span>نصاب‌ها</span><span>${faDigits(DB.installers.length)}</span></div><div class="kv"><span>پیمانکاران</span><span>${faDigits(DB.contractors.length)}</span></div></div>
     <div class="card"><button class="btn danger wide" style="margin:0" onclick="askConfirm('همه اطلاعات برنامه پاک شود؟ این کار قابل بازگشت نیست.',()=>askConfirm('واقعاً مطمئن هستید؟',()=>{DB=fix({});save();tab('home')}))">پاک کردن همه اطلاعات</button></div>
-    <div style="text-align:center;margin-top:18px"><img src="logo.png" alt="راوانو" style="width:150px;opacity:.9"><div class="mut">نسخه ۱٫۶</div></div>`;
+    <div style="text-align:center;margin-top:18px"><img src="logo.png" alt="راوانو" style="width:150px;opacity:.9"><div class="mut">نسخه ۱٫۷</div></div>`;
   return { title: 'تنظیمات', html: h };
 };
 
@@ -970,7 +972,7 @@ function importData(input) {
 
 // ===================== رندر =====================
 const NAV = [['home', 'site', 'پروژه‌ها'], ['workers', 'helmet', 'شاگردها'], ['installers', 'ruler', 'نصاب‌ها'], ['contractors', 'wallet', 'پیمانکاران'], ['invoices', 'receipt', 'فاکتور'], ['notes', 'bell', 'یادداشت'], ['chart', 'chart', 'نمودار']];
-const ROOT = { home: 'home', cat: 'home', project: 'home', settings: 'home', workers: 'workers', worker: 'workers', attendance: 'workers', installers: 'installers', installer: 'installers', contractors: 'contractors', contractor: 'contractors', chart: 'chart', invoices: 'invoices', invoice: 'invoices', invPreview: 'invoices', invSettings: 'invoices', notes: 'notes' };
+const ROOT = { home: 'home', cat: 'home', project: 'home', settings: 'home', workers: 'workers', worker: 'workers', attendance: 'workers', installers: 'installers', installer: 'installers', contractors: 'contractors', contractor: 'contractors', chart: 'chart', invoices: 'invoices', invoice: 'invoices', invPreview: 'invoices', invSettings: 'invoices', notes: 'notes', stmt: 'home', stmtPreview: 'home' };
 function navBadge(t) { const f = window.NAV_BADGE && window.NAV_BADGE[t]; const n = f ? f() : 0; return n ? `<i class="nb">${faDigits(n > 9 ? '9+' : n)}</i>` : ''; }
 window.openTab = n => { closeModal(); tab(n); };
 function render() {
