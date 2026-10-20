@@ -8,6 +8,8 @@ let DB = load();
 function fix(d) {
   for (const k of ['cats', 'projects', 'workers', 'installers', 'contractors', 'progress', 'tx']) d[k] = Array.isArray(d[k]) ? d[k] : [];
   d.att = d.att && typeof d.att === 'object' ? d.att : {};
+  d.invoices = Array.isArray(d.invoices) ? d.invoices : [];
+  d.inv = d.inv && typeof d.inv === 'object' ? d.inv : {};
   d.seq = d.seq || 1;
   d.v = 1;
   return d;
@@ -54,6 +56,13 @@ const ICONS = {
   out: '<path d="M12 20V7M6 13l6-6 6 6"/><path d="M5 4h14"/>',
   cal: '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
   box: '<path d="M3 8l9-5 9 5v8l-9 5-9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/>',
+  receipt: '<path d="M5 3h14v18l-2.5-1.5L14 21l-2-1.5L10 21l-2.5-1.5L5 21z"/><path d="M8.5 8h7M8.5 11.5h7M8.5 15h4"/>',
+  share: '<circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="M8.2 10.8l7.6-4.4M8.2 13.2l7.6 4.4"/>',
+  pdf: '<path d="M6 2.5h8.5L19 7v14.5H6z"/><path d="M14 2.5V7h5"/><path d="M9 13h6M9 16.5h6M9 9.5h2"/>',
+  eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  copy: '<rect x="8" y="8" width="12.5" height="12.5" rx="2"/><path d="M15.5 8V5.5a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2H8"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-8 9"/>',
   coins: '<ellipse cx="9" cy="7" rx="6" ry="3"/><path d="M3 7v5c0 1.7 2.7 3 6 3s6-1.3 6-3V7"/><path d="M9 15v3c0 1.7 2.7 3 6 3s6-1.3 6-3v-5c0-1.6-2.4-2.9-5.5-3"/>',
 };
 function ic(n) { return `<svg class="i" viewBox="0 0 24 24">${ICONS[n] || ''}</svg>`; }
@@ -208,7 +217,7 @@ function fieldInput(f) {
     case 'date': return `<div class="row"><input id="${id}" inputmode="numeric" value="${esc(v || todayJ())}" placeholder="1405/07/28"><button type="button" class="btn sm" onclick="document.getElementById('${id}').value=todayJ()">امروز</button></div>`;
     case 'select': return `<select id="${id}" onchange="updateWhen()">${f.opts.map(o => `<option value="${esc(o[0])}" ${String(o[0]) === String(v) ? 'selected' : ''}>${esc(o[1])}</option>`).join('')}</select>`;
     case 'textarea': return `<textarea id="${id}">${esc(v)}</textarea>`;
-    default: return `<input id="${id}" value="${esc(v)}">`;
+    default: return `<input id="${id}" value="${esc(v)}" ${f.list ? `list="dl_${f.k}"` : ''} ${f.onchange ? `onchange="${f.onchange}"` : ''} ${f.ltr ? 'dir="ltr" style="text-align:left"' : ''}>${f.list ? `<datalist id="dl_${f.k}">${f.list.map(x => `<option value="${esc(x)}">`).join('')}</datalist>` : ''}`;
   }
 }
 function openForm(title, fields, cb, delCb) {
@@ -781,7 +790,7 @@ V.settings = () => {
     <label class="btn dark wide">${ic('in')} بازیابی از فایل پشتیبان<input type="file" accept=".json,application/json,text/plain,*/*" style="display:none" onchange="importData(this)"></label></div>
     <div class="card"><div class="kv"><span>دسته‌ها</span><span>${faDigits(DB.cats.length)}</span></div><div class="kv"><span>پروژه‌ها</span><span>${faDigits(n)}</span></div><div class="kv"><span>شاگردها</span><span>${faDigits(w)}</span></div><div class="kv"><span>نصاب‌ها</span><span>${faDigits(DB.installers.length)}</span></div><div class="kv"><span>پیمانکاران</span><span>${faDigits(DB.contractors.length)}</span></div></div>
     <div class="card"><button class="btn danger wide" style="margin:0" onclick="askConfirm('همه اطلاعات برنامه پاک شود؟ این کار قابل بازگشت نیست.',()=>askConfirm('واقعاً مطمئن هستید؟',()=>{DB=fix({});save();tab('home')}))">پاک کردن همه اطلاعات</button></div>
-    <div style="text-align:center;margin-top:18px"><img src="logo.png" alt="راوانو" style="width:150px;opacity:.9"><div class="mut">نسخه ۱٫۳</div></div>`;
+    <div style="text-align:center;margin-top:18px"><img src="logo.png" alt="راوانو" style="width:150px;opacity:.9"><div class="mut">نسخه ۱٫۴</div></div>`;
   return { title: 'تنظیمات', html: h };
 };
 
@@ -813,8 +822,8 @@ function importData(input) {
 }
 
 // ===================== رندر =====================
-const NAV = [['home', 'site', 'پروژه‌ها'], ['workers', 'helmet', 'شاگردها'], ['installers', 'ruler', 'نصاب‌ها'], ['contractors', 'wallet', 'پیمانکاران'], ['chart', 'chart', 'نمودار']];
-const ROOT = { home: 'home', cat: 'home', project: 'home', settings: 'home', workers: 'workers', worker: 'workers', attendance: 'workers', installers: 'installers', installer: 'installers', contractors: 'contractors', contractor: 'contractors', chart: 'chart' };
+const NAV = [['home', 'site', 'پروژه‌ها'], ['workers', 'helmet', 'شاگردها'], ['installers', 'ruler', 'نصاب‌ها'], ['contractors', 'wallet', 'پیمانکاران'], ['invoices', 'receipt', 'فاکتور'], ['chart', 'chart', 'نمودار']];
+const ROOT = { home: 'home', cat: 'home', project: 'home', settings: 'home', workers: 'workers', worker: 'workers', attendance: 'workers', installers: 'installers', installer: 'installers', contractors: 'contractors', contractor: 'contractors', chart: 'chart', invoices: 'invoices', invoice: 'invoices', invPreview: 'invoices', invSettings: 'invoices' };
 function render() {
   const r = cur();
   const v = V[r.name](r);

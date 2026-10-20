@@ -204,3 +204,13 @@ table.mt tr.tot td { font-weight: 800; border-top: 2px solid var(--graphite); bo
 @keyframes rise { from { opacity: 0; transform: translateY(12px); } }
 @keyframes load { from { transform: scaleX(0); } }
 @media (prefers-reduced-motion: reduce) { #splash img, #splash .sp-sub, #splash .sp-bar i { animation: none; } }
+
+/* فاکتور */
+.invhead { background: var(--graphite); color: #fff; border-radius: 18px; padding: 16px 18px; margin-bottom: 4px; position: relative; overflow: hidden; border-bottom: 5px solid var(--yellow); }
+.invhead .t { font-family: var(--display); font-size: 22px; color: var(--yellow); line-height: 1.4; }
+.invhead .s { color: #AEB6BF; font-size: 13px; }
+.invhead .no { font-family: var(--display); font-size: 24px; color: #fff; white-space: nowrap; }
+.pvw { width: 100%; overflow: hidden; border-radius: 10px; box-shadow: 0 2px 12px rgba(32,38,45,.18); background: #fff; }
+.pvw iframe { width: 794px; border: 0; transform-origin: top right; display: block; background: #fff; }
+.imgbox { width: 74px; height: 56px; border-radius: 12px; background: var(--paper); display: grid; place-items: center; overflow: hidden; color: #A9AFA6; flex-shrink: 0; border: 1px solid var(--line); }
+.imgbox img { max-width: 66px; max-height: 48px; }
