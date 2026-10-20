@@ -1,0 +1,46 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'ir.sejok.contractor'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'ir.sejok.contractor'
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+
+    // کلید ثابت تا نسخه‌های بعدی بدون حذف برنامه (و بدون از دست رفتن اطلاعات) نصب شوند
+    signingConfigs {
+        app {
+            storeFile file('sejok.keystore')
+            storePassword 'sejok123'
+            keyAlias 'sejok'
+            keyPassword 'sejok123'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.app
+        }
+        debug {
+            signingConfig signingConfigs.app
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}
