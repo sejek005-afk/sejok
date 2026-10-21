@@ -10,8 +10,9 @@ android {
         applicationId 'ir.sejok.contractor'
         minSdk 21
         targetSdk 34
-        versionCode 8
-        versionName '1.7'
+        // تنها محل تعریف نسخه؛ برنامه آن را از BuildConfig.VERSION_NAME می‌خواند
+        versionCode 9
+        versionName '1.8'
     }
 
     // کلید امضای نسخه release فقط از متغیرهای محیطی خوانده می‌شود (در GitHub Actions از Secrets).
@@ -49,8 +50,10 @@ android {
     }
 
     lint {
-        checkReleaseBuilds false
+        checkReleaseBuilds true
         abortOnError false
+        textReport true
+        textOutput file("build/reports/lint-results-release.txt")
     }
 }
 
