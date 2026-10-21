@@ -1,5 +1,7 @@
 package ir.sejok.contractor;
 
+import android.annotation.SuppressLint;
+import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.NotificationManager;
 import android.content.ContentResolver;
@@ -63,12 +65,14 @@ public class MainActivity extends Activity {
     private int pdfToken = 0;
 
     // ---------- چرخه حیات ----------
+    // جاوااسکریپت لازم است و فقط فایل‌های خود برنامه (از assets) بارگذاری می‌شوند؛ ورود به صفحات بیرونی مسدود است
+    @SuppressLint("SetJavaScriptEnabled")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        if (Build.VERSION.SDK_INT >= 21) getWindow().setStatusBarColor(0xFF0B5754);
+        getWindow().setStatusBarColor(0xFF0B5754);
         // برای رسم کامل صفحه فاکتور در PDF (باید قبل از ساخت WebView صدا زده شود)
-        if (Build.VERSION.SDK_INT >= 21) WebView.enableSlowWholeDocumentDraw();
+        WebView.enableSlowWholeDocumentDraw();
 
         assetLoader = new WebViewAssetLoader.Builder()
                 .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
@@ -222,6 +226,7 @@ public class MainActivity extends Activity {
     }
 
     /** ذخیره در Download با MediaStore (اندروید ۱۰+)؛ ردیف ناقص در صورت خطا حذف می‌شود */
+    @TargetApi(29)
     private Uri writeToDownloads(String name, String mime, String sub, Writer writer) throws IOException {
         ContentResolver cr = getContentResolver();
         ContentValues cv = new ContentValues();
