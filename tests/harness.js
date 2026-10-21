@@ -31,7 +31,7 @@ function boot(opts = {}) {
     body: makeEl(), hidden: false,
   };
   const ctx = {
-    console, localStorage, document, navigator: {},
+    console: { log: console.log, warn() { }, error() { } }, localStorage, document, navigator: {},
     setTimeout: () => 0, clearTimeout() { },
     URL: { createObjectURL: () => '' }, Blob: function () { }, FileReader: function () { }, Image: function () { },
     Android: opts.android, addEventListener() { },
