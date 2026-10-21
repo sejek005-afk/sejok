@@ -10,26 +10,31 @@ const S = k => (DB.inv[k] !== undefined && DB.inv[k] !== null) ? DB.inv[k] : INV
 const getInv = id => DB.invoices.find(x => x.id === +id);
 const kindLabel = inv => inv.kind === 'pre' ? 'پیش فاکتور' : 'فاکتور';
 const ccy = () => S('currency');
-function fm(n) { return Math.round(n || 0).toLocaleString('fa-IR'); }
+function fm(n) { return rnd(n).toLocaleString('fa-IR'); }
+// جمع یک ردیف فاکتور به واحد کامل پول
+function lineTotal(it) { return rnd((Number(it.qty) || 0) * (Number(it.price) || 0)) - rnd(it.disc); }
 function fmc(n) { return fm(n) + ' ' + ccy(); }
 
 function invCalc(inv) {
+  // هر ردیف و مبلغ قابل پرداخت به واحد کامل گرد می‌شود تا پرداخت همان عدد نمایش‌داده‌شده، فاکتور را تسویه کند
   let sub = 0, idisc = 0;
-  for (const it of inv.items) { sub += (it.qty || 0) * (it.price || 0); idisc += it.disc || 0; }
+  for (const it of inv.items) { sub += rnd((Number(it.qty) || 0) * (Number(it.price) || 0)); idisc += rnd(it.disc); }
   const base = sub - idisc;
-  const tax = inv.taxOn ? Math.round(base * (inv.taxRate || 0) / 100) : 0;
+  const tax = inv.taxOn ? rnd(base * (Number(inv.taxRate) || 0) / 100) : 0;
   const total = base + tax;
-  const afterDisc = total - (inv.discount || 0);
+  const afterDisc = total - rnd(inv.discount);
   const rt = +S('roundTo') || 0;
-  const round = rt > 0 ? ((afterDisc % rt) + rt) % rt : 0;
-  const payable = afterDisc - round;
+  // کسر رند به سمت صفر و متقارن: ۱۵۰۰- با رند ۱۰۰۰ ← ۱۰۰۰- (نه ۲۰۰۰-)
+  const r0 = rt > 0 ? afterDisc % rt : 0;
+  const round = r0 === 0 ? 0 : r0;
+  const payable = rnd(afterDisc - round);
   let cashP = 0, chqP = 0;
   for (const p of inv.pays || []) {
     if (p.method === 'cheque') {
       const ch = p.chequeId && DB.cheques.find(x => x.id === p.chequeId);
       if (ch && ch.status === 'bounced') continue;
-      chqP += p.amount || 0;
-    } else cashP += p.amount || 0;
+      chqP += rnd(p.amount);
+    } else cashP += rnd(p.amount);
   }
   const paid = cashP + chqP;
   const remain = payable - paid;
@@ -314,7 +319,7 @@ V.invoice = r => {
   if (inv.items.length) h += '<div class="card">' + inv.items.map((it, k) => `<div class="tx" onclick="itemForm(${inv.id},${it.id})"><span class="dot" style="background:var(--paper);color:var(--ink);font-weight:800">${faDigits(k + 1)}</span>
       <div class="d"><div><b>${esc(it.title)}</b></div>${it.desc ? `<div class="mut">${esc(it.desc)}</div>` : ''}
       <div class="mut">${faNum(it.qty)} ${esc(it.unit)} × ${fm(it.price)}${it.disc ? ` · تخفیف ${fm(it.disc)}` : ''}</div></div>
-      <div class="a">${fm(it.qty * it.price - (it.disc || 0))}</div></div>`).join('') + '</div>';
+      <div class="a">${fm(lineTotal(it))}</div></div>`).join('') + '</div>';
   else h += empty('آیتم اضافه کنید؛ یا با «از پروژه» متراژ و قیمت را از یک پروژه بیاورید.', 'receipt', '');
   h += `<div class="sec">انتهای فاکتور</div><div class="card" onclick="payForm(${inv.id})">
     <div class="kv"><span>جمع</span><span>${fmc(c.sub)}</span></div>
@@ -381,7 +386,7 @@ function invoiceHtml(inv) {
   const e = esc;
   const rows = inv.items.map((it, k) => `<tr><td class="n">${faDigits(k + 1)}</td>
     <td class="desc"><b>${e(it.title)}</b>${it.desc ? `<div>${e(it.desc).replace(/\n/g, '<br>')}</div>` : ''}</td>
-    <td>${faNum(it.qty)} ${e(it.unit)}</td><td>${fm(it.price)}</td><td>${fm(it.disc)}</td><td>${fm(it.qty * it.price - (it.disc || 0))}</td></tr>`).join('');
+    <td>${faNum(it.qty)} ${e(it.unit)}</td><td>${fm(it.price)}</td><td>${fm(it.disc)}</td><td>${fm(lineTotal(it))}</td></tr>`).join('');
   const payInfo = S('card') || S('sheba');
   const tl = (a, b, cls) => `<tr class="${cls || ''}"><td>${a}</td><td>${b}</td></tr>`;
   return `<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=794">

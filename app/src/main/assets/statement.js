@@ -33,19 +33,19 @@ function stmtCalc(s) {
   for (const ps of prevS) {
     let a = 0;
     for (const it of ps.items) {
-      const k = itemKey(it); const v = (it.qty || 0) * (it.price || 0);
+      const k = itemKey(it); const v = rnd((Number(it.qty) || 0) * (Number(it.price) || 0));
       prevBy[k] = prevBy[k] || { qty: 0, amt: 0 };
       prevBy[k].qty += it.qty || 0; prevBy[k].amt += v; a += v;
     }
-    prevAmt += a; prevRet += Math.round(a * (ps.ret || 0) / 100);
+    prevAmt += a; prevRet += rnd(a * (Number(ps.ret) || 0) / 100);
   }
   const rows = s.items.map(it => {
     const pv = prevBy[itemKey(it)] || { qty: 0, amt: 0 };
-    const amt = (it.qty || 0) * (it.price || 0);
+    const amt = rnd((Number(it.qty) || 0) * (Number(it.price) || 0));
     return { it, pq: pv.qty, pa: pv.amt, q: it.qty || 0, a: amt, cq: pv.qty + (it.qty || 0), ca: pv.amt + amt };
   });
   const amt = sum(rows, r => r.a);
-  const ret = Math.round(amt * (s.ret || 0) / 100);
+  const ret = rnd(amt * (Number(s.ret) || 0) / 100);
   return { rows, prevAmt, amt, cumAmt: prevAmt + amt, prevRet, ret, cumRet: prevRet + ret, prevNet: prevAmt - prevRet, net: amt - ret, cumNet: prevAmt + amt - prevRet - ret };
 }
 

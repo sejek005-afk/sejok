@@ -46,12 +46,14 @@ function nid() { return DB.seq++; }
 // ===================== ابزارها =====================
 const FA = '۰۱۲۳۴۵۶۷۸۹', AR = '٠١٢٣٤٥٦٧٨٩';
 function toEn(s) { return String(s == null ? '' : s).replace(/[۰-۹]/g, c => FA.indexOf(c)).replace(/[٠-٩]/g, c => AR.indexOf(c)); }
+// گرد کردن متقارن (۱٫۵ ← ۲ و −۱٫۵ ← −۲) و بدون «منفی صفر»
+function rnd(x) { x = Number(x) || 0; const r = Math.sign(x) * Math.round(Math.abs(x)); return r === 0 ? 0 : r; }
 function jsq(s) { return esc(JSON.stringify(String(s == null ? '' : s))); } // رشته امن برای کد داخل onclick
-function num(v) { const n = parseFloat(toEn(v).replace(/[,،٬\s]/g, '').replace('٫', '.')); return isFinite(n) ? n : 0; }
-function faNum(n) { return (Math.round(n * 100) / 100).toLocaleString('fa-IR'); }
+function num(v) { const n = parseFloat(toEn(v).replace(/[,،٬\s]/g, '').replace(/[٫/]/, '.')); return isFinite(n) ? n : 0; }
+function faNum(n) { return (rnd((Number(n) || 0) * 100) / 100).toLocaleString('fa-IR'); }
 function faDigits(s) { return String(s).replace(/\d/g, d => FA[d]); }
 function money(n, cls) {
-  n = Math.round(n || 0);
+  n = rnd(n);
   const c = cls ? (n < 0 ? 'neg' : n > 0 ? 'pos' : '') : '';
   return `<span class="${c}">${n.toLocaleString('fa-IR')} تومان</span>`;
 }
@@ -251,8 +253,12 @@ function toast(msg) {
 }
 
 function fmtMoney(el) {
-  const v = toEn(el.value).replace(/[^\d]/g, '');
-  el.value = v ? Number(v).toLocaleString('en-US') : '';
+  // فقط یک جداکننده اعشار نگه داشته می‌شود؛ هنگام ذخیره، مبلغ به عدد صحیح گرد می‌شود (هرگز ×۱۰ نمی‌شود)
+  const v = toEn(el.value).replace(/[٫/]/g, '.').replace(/[^\d.]/g, '');
+  const i = v.indexOf('.');
+  let ip = (i < 0 ? v : v.slice(0, i)).replace(/^0+(?=\d)/, '');
+  const dp = i < 0 ? null : v.slice(i + 1).replace(/\./g, '');
+  el.value = (ip ? Number(ip).toLocaleString('en-US') : (dp !== null ? '0' : '')) + (dp !== null ? '.' + dp : '');
 }
 
 function fieldInput(f) {
@@ -281,7 +287,8 @@ function readForm() {
   for (const f of formFields) {
     const el = document.getElementById('f_' + f.k);
     let v = el ? el.value : '';
-    if (f.type === 'money' || f.type === 'num') v = num(v);
+    if (f.type === 'money') v = rnd(num(v));
+    else if (f.type === 'num') v = num(v);
     else if (f.type === 'select' && f.numeric) v = v === '' ? null : +v;
     else if (typeof v === 'string') v = v.trim();
     o[f.k] = v;
@@ -478,7 +485,7 @@ function progressForm(pid, id) {
 
 function breakdown(a, p) {
   return `<div class="kv"><span>متراژ کار</span><span>${faNum(a.meters)} متر</span></div>
-  <div class="kv"><span>درآمد (${faNum(a.meters)} × ${Math.round(rate(p)).toLocaleString('fa-IR')})</span><span>${money(a.revenue)}</span></div>
+  <div class="kv"><span>درآمد (${faNum(a.meters)} × ${rnd(rate(p)).toLocaleString('fa-IR')})</span><span>${money(a.revenue)}</span></div>
   ${p.type === 'labor' ? '' : `<div class="kv"><span>متریال مصرفی</span><span>− ${money(a.material)}</span></div>`}
   <div class="kv"><span>دستمزد شاگردها (${faNum(a.wdays)} نفر‌روز)</span><span>− ${money(a.workers)}</span></div>
   <div class="kv"><span>دستمزد نصاب</span><span>− ${money(a.installers)}</span></div>
@@ -561,7 +568,7 @@ function txRow(t, show) {
   if (show !== 'target' && who) parts.push(who);
   const sign = t.type === 'in' ? '+' : '−';
   return `<div class="tx" onclick="txForm(${t.id})"><span class="dot ${t.type === 'in' ? 'in' : 'out'}">${ic(t.type === 'in' ? 'in' : 'out')}</span><div class="d"><div>${txLabel(t)}${t.note ? ' — ' + esc(t.note) : ''}</div><div class="mut">${esc(parts.join(' · '))}</div></div>
-    <div class="a ${t.type === 'in' ? 'pos' : 'neg'}">${sign} ${Math.round(t.amount).toLocaleString('fa-IR')}</div></div>`;
+    <div class="a ${t.type === 'in' ? 'pos' : 'neg'}">${sign} ${rnd(t.amount).toLocaleString('fa-IR')}</div></div>`;
 }
 const byDateDesc = (a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id;
 
@@ -742,7 +749,7 @@ function personAccount(kind, x, s, firstRows) {
 }
 function adjRow(x) {
   return `<div class="tx" onclick="adjForm('${x.who}',${x.pid},'${x.type}',${x.id})"><span class="dot ${x.type === 'fine' ? 'out' : 'in'}">${ic(x.type === 'fine' ? 'out' : 'plus')}</span><div class="d"><div>${x.type === 'fine' ? 'جریمه / کسر' : 'پاداش / اضافه‌کار'}${x.note ? ' — ' + esc(x.note) : ''}</div><div class="mut">${showDate(x.date)}${x.projectId ? ' · ' + esc(pname(x.projectId)) : ''}</div></div>
-    <div class="a ${x.type === 'fine' ? 'neg' : 'pos'}">${x.type === 'fine' ? '−' : '+'} ${Math.round(x.amount).toLocaleString('fa-IR')}</div></div>`;
+    <div class="a ${x.type === 'fine' ? 'neg' : 'pos'}">${x.type === 'fine' ? '−' : '+'} ${rnd(x.amount).toLocaleString('fa-IR')}</div></div>`;
 }
 function personLists(kind, x, s) {
   const pays = s.pays.slice().sort(byDateDesc);
@@ -760,7 +767,7 @@ function settleForm(kind, id) {
   if (s.bal <= 0) { toast('طلبی برای تسویه وجود ندارد'); return; }
   openForm(`تسویه حساب با ${fullName(x)}`, [
     { k: 'date', label: 'تاریخ تسویه', type: 'date' },
-    { k: 'amount', label: 'مبلغ پرداختی (تومان)', type: 'money', req: true, value: Math.round(s.bal), hint: `طلب تا این لحظه: ${Math.round(s.bal).toLocaleString('fa-IR')} تومان. اگر کمتر بپردازید، باقی‌مانده به‌عنوان طلب می‌ماند.` },
+    { k: 'amount', label: 'مبلغ پرداختی (تومان)', type: 'money', req: true, value: Math.round(s.bal), hint: `طلب تا این لحظه: ${rnd(s.bal).toLocaleString('fa-IR')} تومان. اگر کمتر بپردازید، باقی‌مانده به‌عنوان طلب می‌ماند.` },
     { k: 'contractorId', label: 'پرداخت از طرف پیمانکار (اختیاری)', type: 'select', numeric: true, opts: contrOpts('— بدون پیمانکار —'), value: '' },
     { k: 'note', label: 'توضیحات', type: 'textarea', value: `تسویه حساب تا ${showDate(todayJ())}` },
   ], o => { DB.tx.push(payRec(kind, x, o, 'settle')); return () => settledInfo(kind, id, o.amount); });
@@ -797,7 +804,7 @@ function adjForm(kind, id, type, adjId) {
 function openExt(url) { if (window.Android && Android.openUrl) Android.openUrl(url); else window.open(url, '_blank'); }
 function personText(kind, id, mode) {
   const x = personOf(kind, id), s = statsOf(kind, x);
-  const f = n => Math.round(n).toLocaleString('fa-IR') + ' تومان';
+  const f = n => rnd(n).toLocaleString('fa-IR') + ' تومان';
   const L = [`${fullName(x)} عزیز، سلام`];
   if (mode === 'settle' && s.lastSettle) {
     L.push(`مبلغ ${f(s.lastSettle.amount)} بابت تسویه حساب در تاریخ ${showDate(s.lastSettle.date)} پرداخت شد.`);
@@ -858,7 +865,7 @@ V.installers = () => {
   else h += '<div class="list">' + DB.installers.map(i => {
     const s = instStats(i);
     return `<div class="li" onclick="go('installer',{id:${i.id}})"><span class="av sq on">${ic('ruler')}</span>
-      <div class="d"><b>${esc(fullName(i))}</b><div class="mut">${Math.round(i.rate || 0).toLocaleString('fa-IR')} تومان هر متر · ${faNum(s.meters)} متر کار</div></div>
+      <div class="d"><b>${esc(fullName(i))}</b><div class="mut">${rnd(i.rate || 0).toLocaleString('fa-IR')} تومان هر متر · ${faNum(s.meters)} متر کار</div></div>
       <div class="v">${money(s.bal, 1)}<small>طلب تا امروز</small></div></div>`;
   }).join('') + '</div>';
   return { title: 'نصاب‌های متری', html: h, fab: 'installerForm()' };
@@ -874,7 +881,7 @@ V.installer = r => {
     ${i.phone ? `<div class="kv"><span>تماس</span><span>${esc(faDigits(i.phone))}</span></div>` : ''}
     <div class="kv"><span>دستمزد هر متر</span><span>${money(i.rate)}</span></div></div>`;
   const works = s.works.slice().sort(byDateDesc);
-  h += `<div class="sec">کارکردها (از بخش پیشرفت کار پروژه‌ها)</div><div class="card">${works.length ? works.map(e => `<div class="tx" onclick="go('project',{id:${e.projectId},sub:'prog'})"><div class="d"><div>${esc(pname(e.projectId))} — ${faNum(e.instMeters)} متر</div><div class="mut">${showDate(e.date)}</div></div><div class="a">${Math.round(e.instMeters * e.instRate).toLocaleString('fa-IR')}</div></div>`).join('') : '<div class="mut">هنوز کارکردی ثبت نشده. هنگام ثبت پیشرفت کار، نصاب را انتخاب کنید.</div>'}</div>`;
+  h += `<div class="sec">کارکردها (از بخش پیشرفت کار پروژه‌ها)</div><div class="card">${works.length ? works.map(e => `<div class="tx" onclick="go('project',{id:${e.projectId},sub:'prog'})"><div class="d"><div>${esc(pname(e.projectId))} — ${faNum(e.instMeters)} متر</div><div class="mut">${showDate(e.date)}</div></div><div class="a">${rnd(e.instMeters * e.instRate).toLocaleString('fa-IR')}</div></div>`).join('') : '<div class="mut">هنوز کارکردی ثبت نشده. هنگام ثبت پیشرفت کار، نصاب را انتخاب کنید.</div>'}</div>`;
   h += personLists('i', i, s);
   return { title: fullName(i), html: h, fab: `txForm(null,{type:'ipay',installerId:${i.id}})`, edit: `installerForm(${i.id})` };
 };
@@ -924,7 +931,7 @@ V.chart = r => {
     <div class="mut" style="margin-top:8px">ارقام به هزار تومان. خالص = درآمد − متریال مصرفی − دستمزد شاگرد و نصاب − هزینه مازاد. (متریال مصرفی سال: ${money(tot('mat'))})</div></div>`;
   return { title: 'نمودار ماهیانه', html: h };
 };
-function short(n) { return Math.round(n / 1000).toLocaleString('fa-IR'); }
+function short(n) { return rnd((Number(n) || 0) / 1000).toLocaleString('fa-IR'); }
 function chartSvg(rows) {
   const W = 360, H = 210, L = 6, R = 6, T = 10, B = 24;
   const vals = rows.flatMap(r => [r.net, r.labor, r.extra]);

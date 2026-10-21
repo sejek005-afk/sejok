@@ -38,7 +38,7 @@ function syncAlarms() {
       const t = chequeTime(c);
       if (!t || t <= now) continue;
       list.push({ id: c.id, t, tag: c.dir === 'out' ? 'urgent' : 'important',
-        title: `سررسید چک ${c.dir === 'out' ? 'پرداختی' : 'دریافتی'}: ${Math.round(c.amount).toLocaleString('fa-IR')} ${c.cur || 'تومان'}`,
+        title: `سررسید چک ${c.dir === 'out' ? 'پرداختی' : 'دریافتی'}: ${rnd(c.amount).toLocaleString('fa-IR')} ${c.cur || 'تومان'}`,
         text: [c.party, c.no ? 'شماره ' + c.no : '', c.bank, (c.before ? `سررسید: ${showDate(c.due)}` : '')].filter(Boolean).join(' — ') });
     }
     try { Android.syncAlarms(JSON.stringify(list)); } catch (e) { }
@@ -212,7 +212,7 @@ function chequeCard(c) {
   const when = c.status !== 'pending' ? '' : today ? ' (امروز)' : late ? ` (${faDigits(-dleft)} روز گذشته)` : dleft != null ? ` (${faDigits(dleft)} روز دیگر)` : '';
   return `<div class="note ${c.dir === 'out' ? 'urgent' : 'important'} ${c.status !== 'pending' ? 'done' : ''}">
     <span class="dot ${c.dir === 'out' ? 'out' : 'in'}" style="margin-top:2px">${ic(c.dir === 'out' ? 'out' : 'in')}</span>
-    <div class="body" onclick="chequeForm(${c.id})"><div class="ct"><span class="nt" style="flex:1;text-decoration:none">${Math.round(c.amount).toLocaleString('fa-IR')} <span style="font-size:12px;font-weight:400">${c.cur || 'تومان'}</span></span><span class="badge ${st[1]}">${st[0]}</span></div>
+    <div class="body" onclick="chequeForm(${c.id})"><div class="ct"><span class="nt" style="flex:1;text-decoration:none">${rnd(c.amount).toLocaleString('fa-IR')} <span style="font-size:12px;font-weight:400">${c.cur || 'تومان'}</span></span><span class="badge ${st[1]}">${st[0]}</span></div>
     <div class="tx2">${c.dir === 'out' ? 'پرداختی به' : 'دریافتی از'} ${esc(c.party || '—')}${c.no ? ' · شماره ' + esc(faDigits(c.no)) : ''}${c.bank ? ' · ' + esc(c.bank) : ''}</div>
     <div class="meta"><span class="${late || today ? 'late' : ''}">${ic(c.alarm && c.status === 'pending' ? 'bell' : 'cal')}سررسید ${showDate(c.due)}${when}</span>
     ${c.invoiceId && getInv(c.invoiceId) ? `<span class="chip" onclick="event.stopPropagation();go('invoice',{id:${c.invoiceId}})">${ic('receipt')}${kindLabel(getInv(c.invoiceId))} ${faDigits(getInv(c.invoiceId).no)}</span>` : ''}</div>
@@ -226,8 +226,8 @@ function chequesView(r) {
   let h = modeTabs('cheques');
   const ns = notifStatus();
   if (ns === 'off') h += `<div class="warn">${ic('bell')}<div style="flex:1">اعلان‌ها خاموش است؛ یادآور سررسید زنگ نمی‌خورد.</div><button class="btn sm dark" onclick="askNotif()">روشن کردن</button></div>`;
-  h += `<div class="card"><div class="row"><div style="flex:1"><div class="mut">چک‌های دریافتنی</div><b class="pos">${Math.round(inSum).toLocaleString('fa-IR')}</b></div>
-    <div style="flex:1"><div class="mut">چک‌های پرداختنی</div><b class="neg">${Math.round(outSum).toLocaleString('fa-IR')}</b></div></div><div class="mut" style="margin-top:4px">مبالغ به تومان · فقط چک‌های در انتظار</div></div>`;
+  h += `<div class="card"><div class="row"><div style="flex:1"><div class="mut">چک‌های دریافتنی</div><b class="pos">${rnd(inSum).toLocaleString('fa-IR')}</b></div>
+    <div style="flex:1"><div class="mut">چک‌های پرداختنی</div><b class="neg">${rnd(outSum).toLocaleString('fa-IR')}</b></div></div><div class="mut" style="margin-top:4px">مبالغ به تومان · فقط چک‌های در انتظار</div></div>`;
   h += `<div class="chips">${[['pending', 'در انتظار'], ['in', 'دریافتی'], ['out', 'پرداختی'], ['done', 'وصول‌شده'], ['bounced', 'برگشتی']].map(x => `<button class="${f === x[0] ? 'on' : ''}" onclick="setSub('cf','${x[0]}')">${x[1]}</button>`).join('')}</div>`;
   let list = DB.cheques.slice();
   if (f === 'pending') list = list.filter(c => c.status === 'pending');
