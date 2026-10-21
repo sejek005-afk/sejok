@@ -49,6 +49,29 @@ jobs:
             echo "SIGNED=0" >> "$GITHUB_ENV"
           fi
 
+      - name: Verify signing secrets
+        if: env.SIGNED == '1'
+        env:
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          ok=1
+          [ -s "$SIGNING_STORE_FILE" ] || { echo "::error::SIGNING_KEYSTORE_BASE64 could not be decoded into a keystore file"; ok=0; }
+          [ -n "$SIGNING_STORE_PASSWORD" ] || { echo "::error::Secret SIGNING_STORE_PASSWORD is missing or empty"; ok=0; }
+          [ -n "$SIGNING_KEY_ALIAS" ] || { echo "::error::Secret SIGNING_KEY_ALIAS is missing or empty"; ok=0; }
+          [ -n "$SIGNING_KEY_PASSWORD" ] || { echo "::error::Secret SIGNING_KEY_PASSWORD is missing or empty"; ok=0; }
+          if [ "$ok" = "1" ]; then
+            if ! keytool -list -keystore "$SIGNING_STORE_FILE" -storepass "$SIGNING_STORE_PASSWORD" > /dev/null 2>&1; then
+              echo "::error::Keystore could not be opened: SIGNING_STORE_PASSWORD is wrong or SIGNING_KEYSTORE_BASE64 is incomplete"; ok=0
+            elif ! keytool -list -keystore "$SIGNING_STORE_FILE" -storepass "$SIGNING_STORE_PASSWORD" -alias "$SIGNING_KEY_ALIAS" > /dev/null 2>&1; then
+              echo "::error::Alias not found: SIGNING_KEY_ALIAS should be rawano"; ok=0
+            else
+              echo "::notice::Signing secrets OK"
+            fi
+          fi
+          [ "$ok" = "1" ]
+
       - name: Build APK and AAB
         env:
           SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
@@ -70,6 +93,8 @@ jobs:
         run: |
           mkdir -p out
           if [ "$SIGNED" = "1" ]; then
+            ls app/build/outputs/apk/release/
+            [ -f app/build/outputs/apk/release/app-release.apk ] || { echo "::error::Release APK was not signed (check signing secrets)"; exit 1; }
             cp app/build/outputs/apk/release/app-release.apk out/rawano.apk
           else
             cp app/build/outputs/apk/debug/app-debug.apk out/rawano.apk
