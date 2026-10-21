@@ -125,6 +125,8 @@
     for (const n of d.notes) if (n.lt === '') { n.lt = null; n.lid = null; }
     d.att = cleanAtt(raw.att);
     d.inv = cleanSettings(raw.inv);
+    // فایل پشتیبان جدید: لوگو و مهر در _assets
+    if (isObj(raw._assets)) for (const k of ['logo', 'stamp']) { const v = T.img(raw._assets[k]); if (v) d.inv[k] = v; }
     const seq = posInt(raw.seq) || 1;
     d.seq = Math.max(seq, maxId + 1);
     // تبدیل قالب قدیمی پرداخت فاکتور (cash/cheque) به فهرست دریافت‌ها

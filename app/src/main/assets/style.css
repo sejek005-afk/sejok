@@ -243,3 +243,5 @@ table.mt tr.tot td { font-weight: 800; border-top: 2px solid var(--graphite); bo
 /* هشدار ذخیره نشدن */
 #savewarn { position: fixed; top: 58px; left: 0; right: 0; z-index: 15; background: var(--bad); color: #fff; padding: 10px 14px; font-size: 13px; line-height: 1.7; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
 #savewarn .btn { margin-top: 6px; display: block; }
+.bar { height: 8px; background: var(--paper); border-radius: 4px; overflow: hidden; margin: 8px 0 4px; }
+.bar i { display: block; height: 100%; border-radius: 4px; }

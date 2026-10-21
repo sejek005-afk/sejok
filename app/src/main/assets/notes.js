@@ -109,9 +109,17 @@ function noteCard(n) {
     ${n.text ? `<div class="tx2">${esc(n.text)}</div>` : ''}
     <div class="meta">${timeLabel(n)}${n.lt && n.lid ? `<span class="chip" onclick="event.stopPropagation();linkGo(${n.id})">${ic(LINK_ICON[n.lt])}${esc(linkName(n))}</span>` : ''}</div></div></div>`;
 }
+// زمان یادآور هر یادداشت یک بار برای هر تغییر داده حساب و نگه داشته می‌شود
+function noteT(n) {
+  const I = idx(); if (!I.noteT) I.noteT = new Map();
+  let t = I.noteT.get(n);
+  if (t === undefined) { t = noteTime(n); I.noteT.set(n, t); }
+  return t;
+}
 function sortNotes(list) {
+  const T = new Map(list.map(n => [n, noteT(n)]));
   return list.sort((a, b) => {
-    const ta = noteTime(a), tb = noteTime(b);
+    const ta = T.get(a), tb = T.get(b);
     if (ta && tb) return ta - tb;
     if (ta) return -1; if (tb) return 1;
     return (TAG_ORDER[a.tag] - TAG_ORDER[b.tag]) || (b.created || 0) - (a.created || 0);
@@ -119,7 +127,7 @@ function sortNotes(list) {
 }
 function overdueCount() {
   const now = Date.now(), t0 = todayJ();
-  return DB.notes.filter(n => !n.done && n.alarm && noteTime(n) && noteTime(n) <= now).length
+  return DB.notes.filter(n => !n.done && n.alarm && noteT(n) && noteT(n) <= now).length
     + DB.cheques.filter(c => c.status === 'pending' && c.due && c.due <= t0).length;
 }
 window.NAV_BADGE = Object.assign(window.NAV_BADGE || {}, { notes: overdueCount });
@@ -134,6 +142,7 @@ V.notes = r => {
   let list = DB.notes.filter(n => f === 'done' ? n.done : !n.done);
   if (tg) list = list.filter(n => (n.tag || 'normal') === tg);
   list = f === 'done' ? list.sort((a, b) => (b.created || 0) - (a.created || 0)) : sortNotes(list);
+  const pg = pager(r, list.length); list = list.slice(0, pg.lim);
   let h = modeTabs('notes');
   const ns = notifStatus();
   if (ns === 'off') h += `<div class="warn">${ic('bell')}<div style="flex:1">اعلان‌های برنامه خاموش است؛ یادآورها زنگ نمی‌خورند.</div><button class="btn sm dark" onclick="askNotif()">روشن کردن</button></div>`;
@@ -143,7 +152,7 @@ V.notes = r => {
   if (!list.length) h += f === 'done' ? empty('یادداشت انجام‌شده‌ای نیست.', 'check', '') : empty('با دکمه + یادداشت بنویسید و برای آن تاریخ و ساعت یادآور بگذارید.', 'bell', 'یادداشتی نیست');
   else if (f === 'active') {
     const now = Date.now(), t0 = todayJ();
-    const groups = [['گذشته', n => noteTime(n) && noteTime(n) <= now], ['امروز', n => n.date === t0], ['آینده', n => noteTime(n) || (n.date && n.date > t0)], ['بدون یادآور', () => true]];
+    const groups = [['گذشته', n => noteT(n) && noteT(n) <= now], ['امروز', n => n.date === t0], ['آینده', n => noteT(n) || (n.date && n.date > t0)], ['بدون یادآور', () => true]];
     const used = new Set();
     for (const [title, fn] of groups) {
       const g = list.filter(n => !used.has(n) && fn(n));
@@ -152,6 +161,7 @@ V.notes = r => {
       h += `<div class="sec">${title} <span class="mut" style="font-weight:400">${faDigits(g.length)}</span></div>` + g.map(noteCard).join('');
     }
   } else h += list.map(noteCard).join('');
+  h += pg.btn;
   return { title: 'یادداشت‌ها', html: h, fab: 'memoForm()' };
 };
 
@@ -234,7 +244,8 @@ function chequesView(r) {
   if (f === 'in' || f === 'out') list = list.filter(c => c.dir === f);
   if (f === 'done') list = list.filter(c => c.status === 'cleared');
   if (f === 'bounced') list = list.filter(c => c.status === 'bounced');
-  list.sort((a, b) => (a.due || '').localeCompare(b.due || ''));
+  list.sort((a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : 0));
+  const pg = pager(r, list.length); list = list.slice(0, pg.lim);
   if (!list.length) h += empty('چک‌های دریافتی و پرداختی را با دکمه + ثبت کنید تا روز سررسید یادآوری شود. چک‌هایی که در فاکتور دریافت کنید هم اینجا می‌آیند.', 'receipt', 'چکی نیست');
   else if (f === 'pending') {
     const groups = [['سررسید گذشته', c => c.due < t0], ['امروز', c => c.due === t0], ['تا یک هفته آینده', c => c.due <= wk], ['بعداً', () => true]];
@@ -245,6 +256,7 @@ function chequesView(r) {
       h += `<div class="sec">${title} <span class="mut" style="font-weight:400">${faDigits(g.length)}</span></div>` + g.map(chequeCard).join('');
     }
   } else h += list.map(chequeCard).join('');
+  h += pg.btn;
   return { title: 'یادداشت‌ها', html: h, fab: 'chequeForm()' };
 }
 syncAlarms();

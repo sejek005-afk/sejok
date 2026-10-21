@@ -26,6 +26,7 @@ function load() {
   }
 }
 function save() {
+  invalidate();
   if (DB_CORRUPT) return; // اطلاعات خراب قبلی بدون اجازه کاربر بازنویسی نمی‌شود
   try {
     localStorage.setItem(KEY, JSON.stringify(DB));
@@ -119,11 +120,12 @@ function weekday(s) { return WD[(jToJdn(s) + 2) % 7]; }
 
 // ===================== دسترسی به اشیا =====================
 const byId = (arr, id) => arr.find(x => x.id === +id);
-const proj = id => byId(DB.projects, id);
-const cat = id => byId(DB.cats, id);
-const worker = id => byId(DB.workers, id);
-const inst = id => byId(DB.installers, id);
-const contr = id => byId(DB.contractors, id);
+// جست‌وجو با Map ساخته‌شده در idx(); اگر رکورد تازه هنوز در شاخص نباشد، جست‌وجوی خطی
+const proj = id => idx().proj.get(+id) || byId(DB.projects, id);
+const cat = id => idx().cat.get(+id) || byId(DB.cats, id);
+const worker = id => idx().worker.get(+id) || byId(DB.workers, id);
+const inst = id => idx().inst.get(+id) || byId(DB.installers, id);
+const contr = id => idx().contr.get(+id) || byId(DB.contractors, id);
 const fullName = x => x ? `${x.first || ''} ${x.last || ''}`.trim() : '';
 const pname = id => { const p = proj(id); return p ? p.name : 'پروژه حذف‌شده'; };
 const wname = id => fullName(worker(id)) || 'شاگرد حذف‌شده';
@@ -150,59 +152,84 @@ function syncAtt() {
   if (changed) save();
 }
 
+// ===================== شاخص‌ها (یک بار برای هر تغییر داده ساخته می‌شوند) =====================
+let IDX = null;
+function invalidate() { IDX = null; }
+function idx() { if (!IDX || IDX.db !== DB) IDX = buildIdx(); return IDX; }
+function mapById(arr) { const m = new Map(); for (const x of arr) m.set(x.id, x); return m; }
+function groupBy(arr, keyFn) { const m = new Map(); for (const x of arr) { const k = keyFn(x); let g = m.get(k); if (!g) m.set(k, g = []); g.push(x); } return m; }
+function zeroAcc() { return { meters: 0, revenue: 0, material: 0, workers: 0, installers: 0, extras: 0, wdays: 0 }; }
+function buildIdx() {
+  const I = { db: DB, proj: mapById(DB.projects), cat: mapById(DB.cats), worker: mapById(DB.workers), inst: mapById(DB.installers), contr: mapById(DB.contractors), cheque: mapById(DB.cheques) };
+  I.progByInst = groupBy(DB.progress, e => e.installerId);
+  I.progByProj = groupBy(DB.progress, e => e.projectId);
+  I.txByWorker = groupBy(DB.tx.filter(t => t.type === 'wpay'), t => t.workerId);
+  I.txByInst = groupBy(DB.tx.filter(t => t.type === 'ipay'), t => t.installerId);
+  I.txByContr = groupBy(DB.tx, t => t.contractorId);
+  I.extraByProj = groupBy(DB.tx.filter(t => t.type === 'extra'), t => t.projectId);
+  I.adjBy = groupBy(DB.adj, x => x.who + ':' + x.pid);
+  I.attByWorker = new Map(); I.present = new Map();
+  // جمع روزانه کل برنامه و جمع روزانه هر پروژه — agg فقط روی همین‌ها جمع می‌زند
+  I.day = new Map(); I.projDay = new Map();
+  const acc = (date, pid) => {
+    let g = I.day.get(date); if (!g) I.day.set(date, g = zeroAcc());
+    let p = null;
+    if (pid != null) {
+      let pm = I.projDay.get(pid); if (!pm) I.projDay.set(pid, pm = new Map());
+      p = pm.get(date); if (!p) pm.set(date, p = zeroAcc());
+    }
+    return [g, p];
+  };
+  const add = (pair, f, v) => { pair[0][f] += v; if (pair[1]) pair[1][f] += v; };
+  for (const e of DB.progress) {
+    const p = I.proj.get(e.projectId); if (!p) continue;
+    const m = Number(e.meters) || 0, x = acc(e.date, e.projectId);
+    add(x, 'meters', m);
+    add(x, 'revenue', m * (Number(rate(p)) || 0));
+    add(x, 'material', m * (Number(matPerM(p)) || 0));
+    add(x, 'installers', (Number(e.instMeters) || 0) * (Number(e.instRate) || 0));
+  }
+  for (const k in DB.att) {
+    const a = DB.att[k], bar = k.indexOf('|'), wid = +k.slice(0, bar), date = k.slice(bar + 1);
+    let wl = I.attByWorker.get(wid); if (!wl) I.attByWorker.set(wid, wl = []);
+    wl.push(a);
+    if (a.s !== 'p' && a.s !== 'h') continue;
+    I.present.set(date, (I.present.get(date) || 0) + 1);
+    const x = acc(date, a.p);
+    add(x, 'workers', Number(a.w) || 0); add(x, 'wdays', a.s === 'h' ? 0.5 : 1);
+  }
+  for (const x of DB.adj) {
+    const v = (x.type === 'fine' ? -1 : 1) * (Number(x.amount) || 0);
+    add(acc(x.date, x.projectId), x.who === 'i' ? 'installers' : 'workers', v);
+  }
+  for (const t of DB.tx) if (t.type === 'extra') add(acc(t.date, t.projectId), 'extras', Number(t.amount) || 0);
+  return I;
+}
+
 // ===================== محاسبات =====================
 // pred: تابع روی تاریخ ، pids: مجموعه شناسه پروژه یا null برای همه
 function agg(pred, pids) {
-  const r = { meters: 0, revenue: 0, material: 0, workers: 0, installers: 0, extras: 0, wdays: 0 };
-  for (const e of DB.progress) {
-    if (pids && !pids.has(e.projectId)) continue;
-    if (!pred(e.date)) continue;
-    const p = proj(e.projectId); if (!p) continue;
-    const m = Number(e.meters) || 0;
-    r.meters += m;
-    r.revenue += m * (Number(rate(p)) || 0);
-    r.material += m * (Number(matPerM(p)) || 0);
-    r.installers += (Number(e.instMeters) || 0) * (Number(e.instRate) || 0);
-  }
-  for (const k in DB.att) {
-    const a = DB.att[k];
-    if (a.s !== 'p' && a.s !== 'h') continue;
-    if (pids && !pids.has(a.p)) continue;
-    if (!pred(k.split('|')[1])) continue;
-    r.workers += Number(a.w) || 0; r.wdays += a.s === 'h' ? 0.5 : 1;
-  }
-  for (const x of DB.adj) {
-    if (pids && !pids.has(x.projectId)) continue;
-    if (!pred(x.date)) continue;
-    const v = (x.type === 'fine' ? -1 : 1) * (Number(x.amount) || 0);
-    if (x.who === 'i') r.installers += v; else r.workers += v;
-  }
-  for (const t of DB.tx) {
-    if (t.type !== 'extra') continue;
-    if (pids && !pids.has(t.projectId)) continue;
-    if (!pred(t.date)) continue;
-    r.extras += Number(t.amount) || 0;
-  }
+  const I = idx(), r = zeroAcc();
+  const take = a => { for (const f in r) r[f] += a[f]; };
+  if (!pids) { for (const [d, a] of I.day) if (pred(d)) take(a); }
+  else for (const pid of pids) { const m = I.projDay.get(pid); if (m) for (const [d, a] of m) if (pred(d)) take(a); }
   r.net = r.revenue - r.material - r.workers - r.installers - r.extras;
   return r;
 }
 const ALL = () => true;
 
 function adjOf(who, id) {
-  const xs = DB.adj.filter(x => x.who === who && x.pid === id);
+  const xs = idx().adjBy.get(who + ':' + id) || [];
   return { list: xs, bonus: sum(xs.filter(x => x.type === 'bonus'), x => x.amount), fine: sum(xs.filter(x => x.type === 'fine'), x => x.amount) };
 }
 function paysOf(type, key, id) {
-  const pays = DB.tx.filter(t => t.type === type && t[key] === id);
+  const pays = (type === 'wpay' ? idx().txByWorker : idx().txByInst).get(id) || [];
   const settles = pays.filter(t => t.sub === 'settle').sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
   return { pays, paid: sum(pays, t => t.amount), adv: sum(pays.filter(t => t.sub === 'advance'), t => t.amount), lastSettle: settles[0] || null };
 }
 function workerStats(w) {
   let days = 0, absent = 0, work = 0;
-  const pre = w.id + '|';
-  for (const k in DB.att) {
-    if (!k.startsWith(pre)) continue;
-    const a = DB.att[k];
+  for (const a of idx().attByWorker.get(w.id) || []) {
     if (a.s === 'p') { days++; work += a.w || 0; }
     else if (a.s === 'h') { days += 0.5; work += a.w || 0; }
     else absent++;
@@ -212,7 +239,7 @@ function workerStats(w) {
   return { days, absent, work, bonus: ad.bonus, fine: ad.fine, adjs: ad.list, earned, paid: py.paid, adv: py.adv, pays: py.pays, lastSettle: py.lastSettle, bal: earned - py.paid };
 }
 function instStats(i) {
-  const works = DB.progress.filter(e => e.installerId === i.id);
+  const works = idx().progByInst.get(i.id) || [];
   const meters = sum(works, e => e.instMeters);
   const work = sum(works, e => e.instMeters * e.instRate);
   const ad = adjOf('i', i.id), py = paysOf('ipay', 'installerId', i.id);
@@ -220,7 +247,7 @@ function instStats(i) {
   return { works, meters, work, bonus: ad.bonus, fine: ad.fine, adjs: ad.list, earned, paid: py.paid, adv: py.adv, pays: py.pays, lastSettle: py.lastSettle, bal: earned - py.paid };
 }
 function contrStats(c) {
-  const txs = DB.tx.filter(t => t.contractorId === c.id);
+  const txs = idx().txByContr.get(c.id) || [];
   const inc = sum(txs.filter(t => t.type === 'in'), t => t.amount);
   const out = sum(txs.filter(t => t.type !== 'in'), t => t.amount);
   return { txs, inc, out, bal: inc - out };
@@ -578,14 +605,19 @@ function txRow(t, show) {
   return `<div class="tx" onclick="txForm(${t.id})"><span class="dot ${t.type === 'in' ? 'in' : 'out'}">${ic(t.type === 'in' ? 'in' : 'out')}</span><div class="d"><div>${txLabel(t)}${t.note ? ' — ' + esc(t.note) : ''}</div><div class="mut">${esc(parts.join(' · '))}</div></div>
     <div class="a ${t.type === 'in' ? 'pos' : 'neg'}">${sign} ${rnd(t.amount).toLocaleString('fa-IR')}</div></div>`;
 }
-const byDateDesc = (a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id;
+const byDateDesc = (a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.id - a.id);
+// صفحه‌بندی فهرست‌های طولانی: فقط lim مورد اول ساخته می‌شود
+function pager(r, total, step) {
+  step = step || 50; const lim = r.lim || step;
+  return { lim, btn: total > lim ? `<button class="btn wide" onclick="setSub('lim',${lim + step})">نمایش بیشتر (${faDigits(total - lim)} مورد دیگر)</button>` : '' };
+}
 
 const V = {};
 
 V.home = () => {
   const t = todayJ(); const ym = t.slice(0, 7);
   const m = agg(d => d.startsWith(ym), null);
-  const present = Object.keys(DB.att).filter(k => k.endsWith('|' + t) && ['p', 'h'].includes(DB.att[k].s)).length;
+  const present = idx().present.get(t) || 0;
   const todayM = agg(d => d === t, null).meters;
   let h = `<div class="diary"><div class="wd">${dayName(t)}</div><div class="date">${showDate(t)}</div>
     <div class="row2"><div class="st"><small>شاگرد حاضر امروز</small><b>${faDigits(present)} نفر</b></div>
@@ -761,7 +793,8 @@ function adjRow(x) {
 }
 function personLists(kind, x, s) {
   const pays = s.pays.slice().sort(byDateDesc);
-  let h = `<div class="sec">پرداختی‌ها، مساعده و تسویه‌ها</div><div class="card">${pays.length ? pays.map(t => txRow(t, 'target')).join('') : '<div class="mut">پرداختی ثبت نشده</div>'}</div>`;
+  const extra = pays.length > 100 ? `<div class="mut" style="text-align:center">${faDigits(pays.length - 100)} پرداخت قدیمی‌تر نمایش داده نشده (در جمع‌ها حساب شده است)</div>` : '';
+  let h = `<div class="sec">پرداختی‌ها، مساعده و تسویه‌ها</div><div class="card">${pays.length ? pays.slice(0, 100).map(t => txRow(t, 'target')).join('') : '<div class="mut">پرداختی ثبت نشده</div>'}${extra}</div>`;
   if (s.adjs.length) h += `<div class="sec">پاداش و جریمه</div><div class="card">${s.adjs.slice().sort(byDateDesc).map(adjRow).join('')}</div>`;
   return h;
 }
@@ -889,7 +922,8 @@ V.installer = r => {
     ${i.phone ? `<div class="kv"><span>تماس</span><span>${esc(faDigits(i.phone))}</span></div>` : ''}
     <div class="kv"><span>دستمزد هر متر</span><span>${money(i.rate)}</span></div></div>`;
   const works = s.works.slice().sort(byDateDesc);
-  h += `<div class="sec">کارکردها (از بخش پیشرفت کار پروژه‌ها)</div><div class="card">${works.length ? works.map(e => `<div class="tx" onclick="go('project',{id:${e.projectId},sub:'prog'})"><div class="d"><div>${esc(pname(e.projectId))} — ${faNum(e.instMeters)} متر</div><div class="mut">${showDate(e.date)}</div></div><div class="a">${rnd(e.instMeters * e.instRate).toLocaleString('fa-IR')}</div></div>`).join('') : '<div class="mut">هنوز کارکردی ثبت نشده. هنگام ثبت پیشرفت کار، نصاب را انتخاب کنید.</div>'}</div>`;
+  const wpg = pager(r, works.length);
+  h += `<div class="sec">کارکردها (از بخش پیشرفت کار پروژه‌ها)</div><div class="card">${works.length ? works.slice(0, wpg.lim).map(e => `<div class="tx" onclick="go('project',{id:${e.projectId},sub:'prog'})"><div class="d"><div>${esc(pname(e.projectId))} — ${faNum(e.instMeters)} متر</div><div class="mut">${showDate(e.date)}</div></div><div class="a">${rnd(e.instMeters * e.instRate).toLocaleString('fa-IR')}</div></div>`).join('') : '<div class="mut">هنوز کارکردی ثبت نشده. هنگام ثبت پیشرفت کار، نصاب را انتخاب کنید.</div>'}</div>${wpg.btn}`;
   h += personLists('i', i, s);
   return { title: fullName(i), html: h, fab: `txForm(null,{type:'ipay',installerId:${i.id}})`, edit: `installerForm(${i.id})` };
 };
@@ -916,7 +950,8 @@ V.contractor = r => {
     <div class="kv total"><span>مانده (دریافتی − خرج‌کرد)</span><span>${money(s.bal, 1)}</span></div></div>`;
   h += `<div class="row" style="margin-bottom:12px"><button class="btn pri" style="flex:1" onclick="txForm(null,{contractorId:${c.id},type:'in'})">${ic('in')} ثبت دریافتی</button><button class="btn dark" style="flex:1" onclick="txForm(null,{contractorId:${c.id}})">${ic('out')} ثبت خرج‌کرد</button></div>`;
   const txs = s.txs.slice().sort(byDateDesc);
-  h += `<div class="card">${txs.length ? txs.map(t => txRow(t, 'contr')).join('') : '<div class="mut">تراکنشی ثبت نشده</div>'}</div>`;
+  const pg = pager(r, txs.length);
+  h += `<div class="card">${txs.length ? txs.slice(0, pg.lim).map(t => txRow(t, 'contr')).join('') : '<div class="mut">تراکنشی ثبت نشده</div>'}</div>${pg.btn}`;
   return { title: fullName(c), html: h, edit: `contractorForm(${c.id})` };
 };
 
@@ -961,9 +996,20 @@ function chartSvg(rows) {
   return s + '</svg>';
 }
 
+function storageUsage() {
+  let bytes = 0;
+  try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); bytes += (k.length + (localStorage.getItem(k) || '').length) * 2; } } catch (e) { }
+  return bytes;
+}
 V.settings = () => {
   const n = DB.projects.length, w = DB.workers.length;
-  let h = `<div class="card"><b>پشتیبان‌گیری</b><div class="mut" style="margin:4px 0 10px">اطلاعات فقط روی همین گوشی ذخیره می‌شود. برای جلوگیری از گم شدن اطلاعات (مثلاً هنگام عوض کردن گوشی)، هر چند وقت یک بار فایل پشتیبان بگیرید.</div>
+  const used = storageUsage(), LIMIT = 5 * 1024 * 1024, pct = Math.min(100, used / LIMIT * 100);
+  const mb = x => (Math.round(x / 1024 / 1024 * 10) / 10).toLocaleString('fa-IR');
+  const storage = `<div class="card"><div class="ct"><b>فضای ذخیره‌سازی</b><span class="badge ${pct > 90 ? 'bad' : pct > 70 ? 'y' : 'ok'}">${faDigits(Math.round(pct))}٪</span></div>
+    <div class="bar"><i style="width:${pct}%;background:${pct > 90 ? 'var(--bad)' : pct > 70 ? 'var(--yellow)' : 'var(--ok)'}"></i></div>
+    <div class="mut">${mb(used)} مگابایت از حدود ${mb(LIMIT)} مگابایت</div>
+    ${pct > 70 ? `<div class="mut" style="color:var(--bad);margin-top:6px">فضای برنامه رو به پر شدن است. فایل پشتیبان بگیرید؛ اگر حافظه پر شود، تغییرات جدید ذخیره نمی‌شوند.</div>` : ''}</div>`;
+  let h = storage + `<div class="card"><b>پشتیبان‌گیری</b><div class="mut" style="margin:4px 0 10px">اطلاعات فقط روی همین گوشی ذخیره می‌شود. برای جلوگیری از گم شدن اطلاعات (مثلاً هنگام عوض کردن گوشی)، هر چند وقت یک بار فایل پشتیبان بگیرید.</div>
     <button class="btn pri wide" onclick="exportData()">${ic('out')} ذخیره فایل پشتیبان</button>
     <label class="btn dark wide">${ic('in')} بازیابی از فایل پشتیبان<input type="file" accept=".json,application/json,text/plain,*/*" style="display:none" onchange="importData(this)"></label></div>
     <div class="card"><div class="kv"><span>دسته‌ها</span><span>${faDigits(DB.cats.length)}</span></div><div class="kv"><span>پروژه‌ها</span><span>${faDigits(n)}</span></div><div class="kv"><span>شاگردها</span><span>${faDigits(w)}</span></div><div class="kv"><span>نصاب‌ها</span><span>${faDigits(DB.installers.length)}</span></div><div class="kv"><span>پیمانکاران</span><span>${faDigits(DB.contractors.length)}</span></div></div>
@@ -974,7 +1020,9 @@ V.settings = () => {
 
 function exportData() {
   const name = `rawano-backup-${todayJ().replace(/\//g, '-')}.json`;
-  const json = JSON.stringify(DB);
+  const payload = Object.assign({}, DB);
+  if (window.getAsset) payload._assets = { logo: getAsset('logo'), stamp: getAsset('stamp') };
+  const json = JSON.stringify(payload);
   if (window.Android && Android.saveFile) {
     const r = Android.saveFile(name, json);
     if (r && r.indexOf('ok:') === 0) info('پشتیبان ذخیره شد', `<p>فایل در پوشه <b>Download</b> گوشی ذخیره شد:</p><p dir="ltr" style="text-align:left">${esc(r.slice(3))}</p>`);
@@ -993,7 +1041,9 @@ function parseBackup(text) {
   return sanitizeDB(d);
 }
 function applyBackup(r) {
-  DB = r.db; DB_CORRUPT = null; save(); syncAtt();
+  DB = r.db; DB_CORRUPT = null;
+  if (window.migrateAssets) migrateAssets(true);
+  save(); syncAtt();
   stack = [{ name: 'home' }]; render();
   toast(r.dropped ? `بازیابی انجام شد؛ ${faDigits(r.dropped)} مورد نامعتبر نادیده گرفته شد` : 'بازیابی انجام شد');
 }

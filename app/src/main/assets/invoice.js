@@ -6,7 +6,23 @@ const INV_DEF = {
   sign: '1', showBal: '1', nextNo: 1, logo: '', stamp: '', defTitle: '',
 };
 const UNITS = ['متر مربع', 'متر طول', 'متر', 'عدد', 'شاخه', 'برگ', 'کیلوگرم', 'سرویس', 'روز', 'مقطوع'];
-const S = k => (DB.inv[k] !== undefined && DB.inv[k] !== null) ? DB.inv[k] : INV_DEF[k];
+// لوگو و مهر جدا از اطلاعات اصلی ذخیره می‌شوند تا فایل اصلی سنگین نشود
+const ASSET_KEY = { logo: 'rawano_logo', stamp: 'rawano_stamp' };
+function getAsset(k) { try { return localStorage.getItem(ASSET_KEY[k]) || ''; } catch (e) { return ''; } }
+function setAsset(k, v) {
+  try { if (v) localStorage.setItem(ASSET_KEY[k], v); else localStorage.removeItem(ASSET_KEY[k]); return true; } catch (e) { return false; }
+}
+// انتقال لوگو/مهر از داخل اطلاعات اصلی (نسخه‌های قبلی یا فایل پشتیبان) به کلید جداگانه
+function migrateAssets(force) {
+  let changed = false;
+  for (const k of ['logo', 'stamp']) {
+    if (DB.inv[k] === undefined) { if (force) setAsset(k, ''); continue; }
+    if (force || !getAsset(k)) setAsset(k, DB.inv[k]);
+    delete DB.inv[k]; changed = true;
+  }
+  return changed;
+}
+const S = k => (k === 'logo' || k === 'stamp') ? getAsset(k) : (DB.inv[k] !== undefined && DB.inv[k] !== null) ? DB.inv[k] : INV_DEF[k];
 const getInv = id => DB.invoices.find(x => x.id === +id);
 const kindLabel = inv => inv.kind === 'pre' ? 'پیش فاکتور' : 'فاکتور';
 const ccy = () => S('currency');
@@ -15,7 +31,14 @@ function fm(n) { return rnd(n).toLocaleString('fa-IR'); }
 function lineTotal(it) { return rnd((Number(it.qty) || 0) * (Number(it.price) || 0)) - rnd(it.disc); }
 function fmc(n) { return fm(n) + ' ' + ccy(); }
 
+// نتیجه محاسبه هر فاکتور تا تغییر بعدی داده (save) نگه داشته می‌شود
 function invCalc(inv) {
+  const I = idx(); if (!I.invCalc) I.invCalc = new Map();
+  let c = I.invCalc.get(inv);
+  if (!c) { c = invCalcRaw(inv); I.invCalc.set(inv, c); }
+  return c;
+}
+function invCalcRaw(inv) {
   // هر ردیف و مبلغ قابل پرداخت به واحد کامل گرد می‌شود تا پرداخت همان عدد نمایش‌داده‌شده، فاکتور را تسویه کند
   let sub = 0, idisc = 0;
   for (const it of inv.items) { sub += rnd((Number(it.qty) || 0) * (Number(it.price) || 0)); idisc += rnd(it.disc); }
@@ -31,7 +54,7 @@ function invCalc(inv) {
   let cashP = 0, chqP = 0;
   for (const p of inv.pays || []) {
     if (p.method === 'cheque') {
-      const ch = p.chequeId && DB.cheques.find(x => x.id === p.chequeId);
+      const ch = p.chequeId && idx().cheque.get(p.chequeId);
       if (ch && ch.status === 'bounced') continue;
       chqP += rnd(p.amount);
     } else cashP += rnd(p.amount);
@@ -168,7 +191,8 @@ function payRow(inv, p) {
 
 // ---------- حساب پروژه با کارفرما ----------
 function projAccount(p) {
-  const invs = DB.invoices.filter(i => i.projectId === p.id && i.kind !== 'pre');
+  const I = idx(); if (!I.invByProj) I.invByProj = groupBy(DB.invoices.filter(i => i.kind !== 'pre'), i => i.projectId);
+  const invs = I.invByProj.get(p.id) || [];
   let invoiced = 0, received = 0;
   for (const i of invs) { const c = invCalc(i); invoiced += c.payable; received += c.paid; }
   const k = ccy() === 'ریال' ? 10 : 1; // مبالغ پروژه به تومان است
@@ -178,7 +202,7 @@ function projAccount(p) {
 }
 function projAccountCard(p) {
   const a = projAccount(p);
-  const rows = a.invs.slice().sort((x, y) => (y.date || '').localeCompare(x.date || '')).map(i => { const c = invCalc(i); const st = STATUS[c.status];
+  const rows = a.invs.slice().sort(byDateDesc).slice(0, 30).map(i => { const c = invCalc(i); const st = STATUS[c.status];
     return `<div class="tx" onclick="go('invoice',{id:${i.id}})"><span class="dot" style="background:var(--yellow-soft);color:#8A6400">${ic('receipt')}</span><div class="d"><div>${kindLabel(i)} ${faDigits(i.no)}${i.title ? ' — ' + esc(i.title) : ''}</div><div class="mut">${showDate(i.date)} · <span class="badge ${st[1]}">${st[0]}</span></div></div><div class="a">${fm(c.payable)}</div></div>`; }).join('');
   return `<div class="card"><div class="ct" style="margin-bottom:4px"><b>حساب با کارفرما</b><button class="btn sm pri" onclick="newInvoice('inv',${p.id})">${ic('plus')} فاکتور</button></div>
     <div class="kv"><span>ارزش کار انجام‌شده</span><span>${fmc(a.work)}</span></div>
@@ -249,12 +273,19 @@ function pickImage(key) {
     rd.onload = () => {
       const img = new Image();
       img.onload = () => {
-        const max = 600, sc = Math.min(1, max / Math.max(img.width, img.height));
+        // کوچک‌سازی و فشرده‌سازی: حداکثر ۴۰۰ پیکسل؛ اگر PNG سنگین بود JPEG با زمینه سفید
+        const max = 400, sc = Math.min(1, max / Math.max(img.width, img.height));
         const cv = document.createElement('canvas');
-        cv.width = Math.round(img.width * sc); cv.height = Math.round(img.height * sc);
-        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
-        DB.inv[key] = cv.toDataURL('image/png');
-        save(); render(); toast('تصویر ذخیره شد');
+        cv.width = Math.max(1, Math.round(img.width * sc)); cv.height = Math.max(1, Math.round(img.height * sc));
+        const g = cv.getContext('2d');
+        g.drawImage(img, 0, 0, cv.width, cv.height);
+        let data = cv.toDataURL('image/png');
+        if (data.length > 150000) {
+          g.globalCompositeOperation = 'destination-over'; g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height);
+          data = cv.toDataURL('image/jpeg', 0.85);
+        }
+        if (!setAsset(key, data)) { toast('حافظه برنامه کافی نیست؛ تصویر ذخیره نشد'); return; }
+        render(); toast('تصویر ذخیره شد');
       };
       img.onerror = () => toast('این فایل تصویر معتبر نیست');
       img.src = rd.result;
@@ -263,13 +294,13 @@ function pickImage(key) {
   };
   document.body.appendChild(inp); inp.click(); setTimeout(() => inp.remove(), 60000);
 }
-function clearImage(key) { DB.inv[key] = key === 'logo' ? 'none' : ''; save(); render(); }
+function clearImage(key) { setAsset(key, key === 'logo' ? 'none' : ''); render(); }
 const logoSrc = () => { const l = S('logo'); return l === 'none' ? '' : (l || 'logo.png'); };
 
 // ---------- نمایش‌ها ----------
 V.invoices = r => {
   const f = r.f || 'all';
-  let list = DB.invoices.slice().sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.no - a.no);
+  let list = DB.invoices.slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.no - a.no));
   const calcs = new Map(list.map(i => [i, invCalc(i)]));
   const openSum = sum(list.filter(i => i.kind !== 'pre'), i => Math.max(0, calcs.get(i).remain));
   if (f === 'open') list = list.filter(i => ['open', 'part'].includes(calcs.get(i).status));
@@ -279,12 +310,13 @@ V.invoices = r => {
     <button class="btn sm dark" onclick="go('invSettings')">${ic('gear')} تنظیمات</button></div></div>`;
   h += `<div class="seg" style="margin-bottom:12px;display:flex">${[['all', 'همه'], ['open', 'تسویه‌نشده'], ['pre', 'پیش فاکتور'], ['proj', 'حساب پروژه‌ها']].map(x => `<button class="sb ${f === x[0] ? 'p' : ''}" style="flex:1" onclick="setSub('f','${x[0]}')">${x[1]}</button>`).join('')}</div>`;
   if (!list.length) h += empty('با دکمه + فاکتور یا پیش فاکتور جدید بسازید و به صورت PDF ذخیره یا ارسال کنید.', 'receipt', 'فاکتوری نیست');
-  else h += '<div class="list">' + list.map(i => {
+  const pg = pager(r, list.length);
+  if (list.length) h += '<div class="list">' + list.slice(0, pg.lim).map(i => {
     const c = calcs.get(i); const st = STATUS[c.status];
     return `<div class="li" onclick="go('invoice',{id:${i.id}})"><span class="av sq ${i.kind === 'pre' ? '' : 'on'}">${ic('receipt')}</span>
       <div class="d"><b>${kindLabel(i)} ${faDigits(i.no)}${i.title ? ' — ' + esc(i.title) : ''}</b><div class="mut">${esc((i.customer && i.customer.name) || 'بدون طرف حساب')} · ${showDate(i.date)}</div></div>
       <div class="v">${fm(c.payable)}<small><span class="badge ${st[1]}">${st[0]}</span></small></div></div>`;
-  }).join('') + '</div>';
+  }).join('') + '</div>' + pg.btn;
   return { title: 'فاکتورها', html: h, fab: 'invNewMenu()' };
 };
 function invProjView() {
@@ -465,3 +497,6 @@ window.onPdfDone = r => {
   else if (r === 'shared') { }
   else toast('ساخت PDF انجام نشد؛ دوباره تلاش کنید');
 };
+
+// اجرا یک بار هنگام شروع: لوگو/مهر قدیمی از اطلاعات اصلی جدا شود
+if (!DB_CORRUPT && migrateAssets(false)) save();
