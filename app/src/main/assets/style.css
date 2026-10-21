@@ -239,3 +239,7 @@ table.mt tr.tot td { font-weight: 800; border-top: 2px solid var(--graphite); bo
 .warn { background: var(--yellow-soft); border: 1px solid #F0D27A; border-radius: 14px; padding: 10px 12px; margin-bottom: 12px; display: flex; gap: 10px; align-items: center; font-size: 13px; }
 .cal .c.h { background: var(--yellow); color: var(--graphite); font-weight: 700; }
 .sb.h { background: var(--yellow); color: var(--graphite); font-weight: 700; }
+
+/* هشدار ذخیره نشدن */
+#savewarn { position: fixed; top: 58px; left: 0; right: 0; z-index: 15; background: var(--bad); color: #fff; padding: 10px 14px; font-size: 13px; line-height: 1.7; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+#savewarn .btn { margin-top: 6px; display: block; }

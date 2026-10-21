@@ -3,37 +3,50 @@
 const KEY = 'contractor_db_v1';
 const MN = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
 const WD = ['ش', 'ی', 'د', 'س', 'چ', 'پ', 'ج'];
+let DB_CORRUPT = null;   // اگر اطلاعات ذخیره‌شده خراب باشد: { key, size } — تا تصمیم کاربر روی آن ذخیره نمی‌شود
+let SAVE_FAILED = false;
 let DB = load();
 
-function fix(d) {
-  for (const k of ['cats', 'projects', 'workers', 'installers', 'contractors', 'progress', 'tx']) d[k] = Array.isArray(d[k]) ? d[k] : [];
-  d.att = d.att && typeof d.att === 'object' ? d.att : {};
-  d.invoices = Array.isArray(d.invoices) ? d.invoices : [];
-  d.notes = Array.isArray(d.notes) ? d.notes : [];
-  d.adj = Array.isArray(d.adj) ? d.adj : [];
-  d.cheques = Array.isArray(d.cheques) ? d.cheques : [];
-  d.statements = Array.isArray(d.statements) ? d.statements : [];
-  for (const inv of d.invoices) {
-    if (!Array.isArray(inv.pays)) inv.pays = [];
-    if (inv.cash > 0) inv.pays.push({ id: d.seq++, date: inv.date, amount: inv.cash, method: 'cash', note: '' });
-    if (inv.cheque > 0) inv.pays.push({ id: d.seq++, date: inv.date, amount: inv.cheque, method: 'cheque', note: inv.chequeNote || '' });
-    inv.cash = 0; inv.cheque = 0;
-  }
-  d.inv = d.inv && typeof d.inv === 'object' ? d.inv : {};
-  d.seq = d.seq || 1;
-  d.v = 1;
-  return d;
-}
+// ساختار و اعتبارسنجی داده در validate.js است
+function fix(d) { return sanitizeDB(d).db; }
 function load() {
-  try { const d = JSON.parse(localStorage.getItem(KEY)); if (d && d.v) return fix(d); } catch (e) { }
-  return fix({});
+  let raw = null;
+  try { raw = localStorage.getItem(KEY); } catch (e) { }
+  if (raw == null || raw === '') return fix({});
+  try {
+    const d = JSON.parse(raw);
+    if (!d || typeof d !== 'object' || !d.v) throw new Error('bad-format');
+    return sanitizeDB(d).db;
+  } catch (e) {
+    const key = 'db_corrupt_' + Date.now();
+    let copied = false;
+    try { localStorage.setItem(key, raw); copied = true; } catch (e2) { }
+    DB_CORRUPT = { key: copied ? key : null, size: raw.length, raw: copied ? null : raw };
+    return fix({});
+  }
 }
-function save() { try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) { toast('خطا در ذخیره‌سازی!'); } }
+function save() {
+  if (DB_CORRUPT) return; // اطلاعات خراب قبلی بدون اجازه کاربر بازنویسی نمی‌شود
+  try {
+    localStorage.setItem(KEY, JSON.stringify(DB));
+    if (SAVE_FAILED) { SAVE_FAILED = false; updateSaveWarn(); }
+  } catch (e) { SAVE_FAILED = true; updateSaveWarn(); }
+}
+function updateSaveWarn() {
+  if (typeof document === 'undefined' || !document.body) return;
+  let el = document.getElementById('savewarn');
+  if (SAVE_FAILED) {
+    if (!el) { el = document.createElement('div'); el.id = 'savewarn'; document.body.appendChild(el); }
+    el.innerHTML = `<b>⚠ اطلاعات ذخیره نشد!</b> آخرین تغییرات فقط تا وقتی برنامه باز است باقی می‌ماند. حافظه برنامه پر است یا خطایی رخ داده؛ همین الان فایل پشتیبان بگیرید.
+      <button class="btn sm pri" onclick="exportData()">ذخیره فایل پشتیبان</button>`;
+  } else if (el) el.remove();
+}
 function nid() { return DB.seq++; }
 
 // ===================== ابزارها =====================
 const FA = '۰۱۲۳۴۵۶۷۸۹', AR = '٠١٢٣٤٥٦٧٨٩';
 function toEn(s) { return String(s == null ? '' : s).replace(/[۰-۹]/g, c => FA.indexOf(c)).replace(/[٠-٩]/g, c => AR.indexOf(c)); }
+function jsq(s) { return esc(JSON.stringify(String(s == null ? '' : s))); } // رشته امن برای کد داخل onclick
 function num(v) { const n = parseFloat(toEn(v).replace(/[,،٬\s]/g, '').replace('٫', '.')); return isFinite(n) ? n : 0; }
 function faNum(n) { return (Math.round(n * 100) / 100).toLocaleString('fa-IR'); }
 function faDigits(s) { return String(s).replace(/\d/g, d => FA[d]); }
@@ -43,7 +56,7 @@ function money(n, cls) {
   return `<span class="${c}">${n.toLocaleString('fa-IR')} تومان</span>`;
 }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
-function sum(arr, f) { let s = 0; for (const x of arr) s += f(x) || 0; return s; }
+function sum(arr, f) { let s = 0; for (const x of arr) s += Number(f(x)) || 0; return s; }
 
 // آیکون‌های اختصاصی (خطی ۲۴×۲۴)
 const ICONS = {
@@ -143,29 +156,30 @@ function agg(pred, pids) {
     if (pids && !pids.has(e.projectId)) continue;
     if (!pred(e.date)) continue;
     const p = proj(e.projectId); if (!p) continue;
-    r.meters += e.meters;
-    r.revenue += e.meters * rate(p);
-    r.material += e.meters * matPerM(p);
-    r.installers += (e.instMeters || 0) * (e.instRate || 0);
+    const m = Number(e.meters) || 0;
+    r.meters += m;
+    r.revenue += m * (Number(rate(p)) || 0);
+    r.material += m * (Number(matPerM(p)) || 0);
+    r.installers += (Number(e.instMeters) || 0) * (Number(e.instRate) || 0);
   }
   for (const k in DB.att) {
     const a = DB.att[k];
     if (a.s !== 'p' && a.s !== 'h') continue;
     if (pids && !pids.has(a.p)) continue;
     if (!pred(k.split('|')[1])) continue;
-    r.workers += a.w || 0; r.wdays += a.s === 'h' ? 0.5 : 1;
+    r.workers += Number(a.w) || 0; r.wdays += a.s === 'h' ? 0.5 : 1;
   }
   for (const x of DB.adj) {
     if (pids && !pids.has(x.projectId)) continue;
     if (!pred(x.date)) continue;
-    const v = (x.type === 'fine' ? -1 : 1) * (x.amount || 0);
+    const v = (x.type === 'fine' ? -1 : 1) * (Number(x.amount) || 0);
     if (x.who === 'i') r.installers += v; else r.workers += v;
   }
   for (const t of DB.tx) {
     if (t.type !== 'extra') continue;
     if (pids && !pids.has(t.projectId)) continue;
     if (!pred(t.date)) continue;
-    r.extras += t.amount || 0;
+    r.extras += Number(t.amount) || 0;
   }
   r.net = r.revenue - r.material - r.workers - r.installers - r.extras;
   return r;
@@ -659,7 +673,7 @@ function attRow(w, date, withProject) {
   return `<div class="att"><div class="n" onclick="go('worker',{id:${w.id}})"><span class="av ${w.active ? 'on' : ''}">${ic('helmet')}</span><div><div>${esc(fullName(w))}</div>
     <div class="mut">${s === 'h' ? 'نیم‌روز' : w.active ? 'حضور خودکار' : 'غیرفعال'}</div></div></div>
     <span class="seg"><button class="sb ${s === 'p' ? 'p' : ''}" onclick="setAtt(${w.id},'${date}','p')">حاضر</button><button class="sb ${s === 'h' ? 'h' : ''}" onclick="setAtt(${w.id},'${date}','h')">نیم‌روز</button><button class="sb ${s === 'a' ? 'a' : ''}" onclick="setAtt(${w.id},'${date}','a')">غایب</button></span>
-    ${withProject ? `<select class="ps" onchange="setAtt(${w.id},'${date}','p',this.value)">${projOpts('— پروژه —').map(o => `<option value="${o[0]}" ${String(o[0]) === String(pid) ? 'selected' : ''}>${esc(o[1])}</option>`).join('')}</select>` : ''}</div>`;
+    ${withProject ? `<select class="ps" onchange="setAtt(${w.id},'${date}','p',this.value)">${projOpts('— پروژه —').map(o => `<option value="${esc(o[0])}" ${String(o[0]) === String(pid) ? 'selected' : ''}>${esc(o[1])}</option>`).join('')}</select>` : ''}</div>`;
 }
 
 V.workers = () => {
@@ -683,7 +697,7 @@ V.worker = r => {
   const [yy, mm] = r.ym.split('/').map(Number);
   let h = `<div class="card"><div class="switch"><div><b>فعال (حضور خودکار)</b><div class="mut">${w.active ? 'هر روز به‌طور خودکار حاضر ثبت می‌شود' : 'حضور خودکار خاموش است'}</div></div>
     <button class="tg ${w.active ? 'on' : ''}" onclick="toggleActive(${w.id})"></button></div>
-    <label class="fld" style="margin:10px 0 0">پروژه فعلی<select onchange="moveWorker(${w.id},this.value)">${projOpts('— بدون پروژه —').map(o => `<option value="${o[0]}" ${String(o[0]) === String(w.projectId || '') ? 'selected' : ''}>${esc(o[1])}</option>`).join('')}</select></label></div>`;
+    <label class="fld" style="margin:10px 0 0">پروژه فعلی<select onchange="moveWorker(${w.id},this.value)">${projOpts('— بدون پروژه —').map(o => `<option value="${esc(o[0])}" ${String(o[0]) === String(w.projectId || '') ? 'selected' : ''}>${esc(o[1])}</option>`).join('')}</select></label></div>`;
   h += personAccount('w', w, s, `<div class="kv"><span>روزهای کارکرد</span><span>${faNum(s.days)} روز${s.absent ? ` · ${faDigits(s.absent)} غیبت` : ''}</span></div>
     <div class="kv"><span>دستمزد روزهای کارکرد</span><span>${money(s.work)}</span></div>`);
   // تقویم
@@ -699,7 +713,7 @@ V.worker = r => {
     const ds = `${yy}/${p2(mm)}/${p2(d)}`; const a = DB.att[w.id + '|' + ds];
     if (a && (a.s === 'p' || a.s === 'h')) { mDays += a.s === 'h' ? 0.5 : 1; mEarn += a.w || 0; }
     const fut = first + d - 1 > tj;
-    h += `<button class="c ${a ? a.s : ''} ${ds === t ? 't' : ''} ${fut ? 'f' : ''}" onclick="attDayForm(${w.id},'${ds}')">${faDigits(d)}</button>`;
+    h += `<button class="c ${a ? esc(a.s) : ''} ${ds === t ? 't' : ''} ${fut ? 'f' : ''}" onclick="attDayForm(${w.id},'${ds}')">${faDigits(d)}</button>`;
   }
   h += `</div><div class="mut" style="margin-top:8px">این ماه: ${faNum(mDays)} روز کارکرد · ${money(mEarn)}</div>
     <div class="mut">سبز: حاضر · زرد: نیم‌روز · قرمز: غایب — روی هر روز بزنید تا تغییر دهید.</div></div>`;
@@ -724,7 +738,7 @@ function personAccount(kind, x, s, firstRows) {
     ${ls ? `<div class="mut" style="margin-top:8px">${ic('check')} آخرین تسویه: ${showDate(ls.date)} — ${money(ls.amount)}</div>` : ''}
     <div class="row" style="margin-top:12px"><button class="btn pri" style="flex:1" onclick="settleForm('${kind}',${x.id})">${ic('check')} تسویه حساب</button><button class="btn dark" style="flex:1" onclick="advanceForm('${kind}',${x.id})">${ic('coins')} مساعده</button></div>
     <div class="row" style="margin-top:8px"><button class="btn" style="flex:1" onclick="adjForm('${kind}',${x.id},'bonus')">${ic('plus')} پاداش / اضافه‌کار</button><button class="btn" style="flex:1" onclick="adjForm('${kind}',${x.id},'fine')">${ic('out')} جریمه / کسر</button></div>
-    <div class="row" style="margin-top:8px"><button class="btn" style="flex:1" onclick="msgSheet('${kind}',${x.id})">${ic('share')} پیامک / واتساپ</button>${x.phone ? `<button class="btn" onclick="openExt('tel:${esc(toEn(x.phone))}')">${ic('phone')} تماس</button>` : ''}</div></div>`;
+    <div class="row" style="margin-top:8px"><button class="btn" style="flex:1" onclick="msgSheet('${kind}',${x.id})">${ic('share')} پیامک / واتساپ</button>${x.phone ? `<button class="btn" onclick="openExt(${jsq('tel:' + toEn(x.phone).replace(/[^\d+]/g, ''))})">${ic('phone')} تماس</button>` : ''}</div></div>`;
 }
 function adjRow(x) {
   return `<div class="tx" onclick="adjForm('${x.who}',${x.pid},'${x.type}',${x.id})"><span class="dot ${x.type === 'fine' ? 'out' : 'in'}">${ic(x.type === 'fine' ? 'out' : 'plus')}</span><div class="d"><div>${x.type === 'fine' ? 'جریمه / کسر' : 'پاداش / اضافه‌کار'}${x.note ? ' — ' + esc(x.note) : ''}</div><div class="mut">${showDate(x.date)}${x.projectId ? ' · ' + esc(pname(x.projectId)) : ''}</div></div>
@@ -956,18 +970,61 @@ function exportData() {
   a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
   a.download = name; a.click();
 }
+// متن فایل پشتیبان را می‌خواند، اعتبارسنجی می‌کند و { db, dropped } برمی‌گرداند (در صورت نامعتبر بودن خطا می‌دهد)
+function parseBackup(text) {
+  const d = JSON.parse(text);
+  if (!d || typeof d !== 'object' || Array.isArray(d) || !d.v) throw new Error('bad-format');
+  if (!['projects', 'cats', 'workers', 'invoices', 'notes'].some(k => Array.isArray(d[k]))) throw new Error('not-rawano');
+  return sanitizeDB(d);
+}
+function applyBackup(r) {
+  DB = r.db; DB_CORRUPT = null; save(); syncAtt();
+  stack = [{ name: 'home' }]; render();
+  toast(r.dropped ? `بازیابی انجام شد؛ ${faDigits(r.dropped)} مورد نامعتبر نادیده گرفته شد` : 'بازیابی انجام شد');
+}
 function importData(input) {
   const f = input.files && input.files[0]; if (!f) return;
   const rd = new FileReader();
   rd.onload = () => {
-    try {
-      const d = JSON.parse(rd.result);
-      if (!d || !d.v || !Array.isArray(d.projects)) throw 0;
-      askConfirm('اطلاعات فعلی با فایل پشتیبان جایگزین شود؟', () => { DB = fix(d); save(); syncAtt(); tab('home'); toast('بازیابی انجام شد'); });
-    } catch (e) { toast('فایل پشتیبان معتبر نیست'); }
+    let r;
+    try { r = parseBackup(rd.result); } catch (e) { toast('فایل پشتیبان معتبر نیست'); return; }
+    const d = r.db;
+    const msg = `اطلاعات فعلی با فایل پشتیبان جایگزین شود؟ (${faDigits(d.projects.length)} پروژه، ${faDigits(d.workers.length)} شاگرد، ${faDigits(d.invoices.length)} فاکتور${r.dropped ? `، ${faDigits(r.dropped)} مورد نامعتبر حذف می‌شود` : ''})`;
+    askConfirm(msg, () => applyBackup(r));
   };
   rd.readAsText(f);
   input.value = '';
+}
+function exportCorrupt() {
+  const raw = DB_CORRUPT && (DB_CORRUPT.key ? localStorage.getItem(DB_CORRUPT.key) : DB_CORRUPT.raw);
+  if (!raw) { toast('نسخه خراب پیدا نشد'); return; }
+  const name = `rawano-damaged-${todayJ().replace(/\//g, '-')}.json`;
+  if (window.Android && Android.saveFile) { const r = Android.saveFile(name, raw); toast(r && r.indexOf('ok:') === 0 ? 'در پوشه Download ذخیره شد' : 'ذخیره نشد'); return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([raw], { type: 'application/json' })); a.download = name; a.click();
+}
+function startFresh() {
+  askConfirm('برنامه با اطلاعات خالی شروع شود؟ نسخه خراب قبلی در حافظه نگه داشته می‌شود اما دیگر نمایش داده نمی‌شود.', () => {
+    DB_CORRUPT = null; DB = fix({}); save(); stack = [{ name: 'home' }]; render();
+  });
+}
+const RESTORE_BTN = `<label class="btn pri wide">${ic('in')} بازیابی از فایل پشتیبان<input type="file" accept=".json,application/json,text/plain,*/*" style="display:none" onchange="importData(this)"></label>`;
+V.corrupt = () => ({
+  title: 'اطلاعات قابل خواندن نیست',
+  html: `<div class="card"><b style="color:var(--bad)">اطلاعات ذخیره‌شده برنامه خراب است و خوانده نشد.</b>
+    <p class="mut">برای جلوگیری از پاک شدن، هیچ تغییری روی آن ذخیره نمی‌شود تا شما تصمیم بگیرید. یک نسخه از آن هم جداگانه نگه داشته شده است (${faDigits(Math.round((DB_CORRUPT.size || 0) / 1024))} کیلوبایت).</p>
+    ${RESTORE_BTN}
+    <button class="btn dark wide" onclick="exportCorrupt()">${ic('out')} ذخیره نسخه خراب برای بررسی</button>
+    <button class="btn danger wide" onclick="startFresh()">شروع با اطلاعات خالی</button></div>`,
+});
+function renderError(e) {
+  try { console.error(e); } catch (x) { }
+  document.getElementById('hdr').innerHTML = '<h1>خطا</h1>';
+  document.getElementById('main').innerHTML = `<div class="card"><b style="color:var(--bad)">نمایش این صفحه با خطا روبه‌رو شد.</b>
+    <p class="mut">اطلاعات شما سر جایش است. می‌توانید به صفحه اصلی برگردید، از اطلاعات فایل پشتیبان بگیرید یا یک فایل پشتیبان سالم را بازیابی کنید.</p>
+    <button class="btn wide" onclick="stack=[{name:'home'}];render()">${ic('site')} بازگشت به صفحه اصلی</button>
+    <button class="btn dark wide" onclick="exportData()">${ic('out')} ذخیره فایل پشتیبان</button>
+    ${RESTORE_BTN}<div class="mut" dir="ltr" style="text-align:left;font-size:11px">${esc(e && e.message || e)}</div></div>`;
+  document.getElementById('fab').style.display = 'none';
 }
 
 // ===================== رندر =====================
@@ -976,7 +1033,10 @@ const ROOT = { home: 'home', cat: 'home', project: 'home', settings: 'home', wor
 function navBadge(t) { const f = window.NAV_BADGE && window.NAV_BADGE[t]; const n = f ? f() : 0; return n ? `<i class="nb">${faDigits(n > 9 ? '9+' : n)}</i>` : ''; }
 window.openTab = n => { closeModal(); tab(n); };
 function render() {
-  const r = cur();
+  try { renderView(); } catch (e) { renderError(e); }
+}
+function renderView() {
+  const r = DB_CORRUPT ? { name: 'corrupt' } : cur();
   const v = V[r.name](r);
   const rr = cur();
   const canBack = stack.length > 1;
@@ -986,7 +1046,7 @@ function render() {
   const fab = document.getElementById('fab');
   fab.innerHTML = ic('plus');
   if (v.fab) { fab.style.display = ''; fab.setAttribute('onclick', v.fab); } else fab.style.display = 'none';
-  const root = ROOT[(stack[0] || rr).name];
+  const root = DB_CORRUPT ? '' : ROOT[(stack[0] || rr).name];
   document.getElementById('nav').innerHTML = NAV.map(n => `<button class="${root === n[0] ? 'on' : ''}" onclick="tab('${n[0]}')">${ic(n[1])}${n[2]}${navBadge(n[0])}</button>`).join('');
 }
 

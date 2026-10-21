@@ -103,7 +103,7 @@ function timeLabel(n) {
 }
 function noteCard(n) {
   const tg = TAGS[n.tag] || TAGS.normal;
-  return `<div class="note ${n.tag || 'normal'} ${n.done ? 'done' : ''}">
+  return `<div class="note ${esc(n.tag || 'normal')} ${n.done ? 'done' : ''}">
     <button class="chk ${n.done ? 'on' : ''}" onclick="toggleDone(${n.id})" aria-label="انجام شد">${ic('check')}</button>
     <div class="body" onclick="memoForm(${n.id})"><div class="ct"><span class="nt" style="flex:1">${esc(n.title)}</span>${n.tag !== 'normal' ? `<span class="badge ${tg[1]}">${tg[0]}</span>` : ''}</div>
     ${n.text ? `<div class="tx2">${esc(n.text)}</div>` : ''}
