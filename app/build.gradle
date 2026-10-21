@@ -14,23 +14,28 @@ android {
         versionName '1.7'
     }
 
-    // کلید ثابت تا نسخه‌های بعدی بدون حذف برنامه (و بدون از دست رفتن اطلاعات) نصب شوند
+    // کلید امضای نسخه release فقط از متغیرهای محیطی خوانده می‌شود (در GitHub Actions از Secrets).
+    // اگر تنظیم نشده باشد، release بدون امضا ساخته می‌شود و debug با کلید پیش‌فرض debug امضا می‌شود.
+    def env = System.getenv()
+    def signStore = env['SIGNING_STORE_FILE']
+    def hasSigning = signStore && new File(signStore).exists() &&
+            env['SIGNING_STORE_PASSWORD'] && env['SIGNING_KEY_ALIAS'] && env['SIGNING_KEY_PASSWORD']
+
     signingConfigs {
-        app {
-            storeFile file('sejok.keystore')
-            storePassword 'sejok123'
-            keyAlias 'sejok'
-            keyPassword 'sejok123'
+        if (hasSigning) {
+            release {
+                storeFile new File(signStore)
+                storePassword env['SIGNING_STORE_PASSWORD']
+                keyAlias env['SIGNING_KEY_ALIAS']
+                keyPassword env['SIGNING_KEY_PASSWORD']
+            }
         }
     }
 
     buildTypes {
         release {
             minifyEnabled false
-            signingConfig signingConfigs.app
-        }
-        debug {
-            signingConfig signingConfigs.app
+            if (hasSigning) signingConfig signingConfigs.release
         }
     }
 

@@ -32,15 +32,42 @@ jobs:
             https://raw.githubusercontent.com/google/fonts/main/ofl/lalezar/Lalezar-Regular.ttf || true
           ls -la app/src/main/assets/
 
+      - name: Prepare signing key
+        env:
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$SIGNING_KEYSTORE_BASE64" ]; then
+            echo "$SIGNING_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "SIGNING_STORE_FILE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+            echo "SIGNED=1" >> "$GITHUB_ENV"
+          else
+            echo "::warning::Signing secrets are not set - building a debug-signed APK. See docs/SIGNING_FA.md"
+            echo "SIGNED=0" >> "$GITHUB_ENV"
+          fi
+
       - name: Build APK
+        env:
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon --stacktrace
+          if [ "$SIGNED" = "1" ]; then
+            ./gradlew assembleRelease --no-daemon --stacktrace
+          else
+            ./gradlew assembleDebug --no-daemon --stacktrace
+          fi
 
       - name: Rename APK
         run: |
           mkdir -p out
-          cp app/build/outputs/apk/release/*.apk out/contractor.apk
+          if [ "$SIGNED" = "1" ]; then
+            cp app/build/outputs/apk/release/app-release.apk out/contractor.apk
+          else
+            cp app/build/outputs/apk/debug/app-debug.apk out/contractor.apk
+            echo "DEBUG-SIGNED BUILD: signing secrets missing" > out/SIGNING_WARNING.txt
+          fi
+          rm -f "$RUNNER_TEMP/release.keystore"
           ls -la out
 
       - uses: actions/upload-artifact@v4
@@ -57,5 +84,6 @@ jobs:
           git checkout -q -b apk
           echo "APK built from ${GITHUB_SHA}" > README.md
           git add contractor.apk README.md
+          [ -f SIGNING_WARNING.txt ] && git add SIGNING_WARNING.txt
           git commit -q -m "APK for ${GITHUB_SHA}"
           git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" apk
