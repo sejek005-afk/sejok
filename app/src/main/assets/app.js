@@ -304,7 +304,15 @@ function updateWhen() {
     if (el) el.style.display = f.when(o) ? '' : 'none';
   }
 }
+let _submitting = false;
 function submitForm() {
+  if (_submitting || !formFields) return; // جلوگیری از ثبت دوباره با دو بار لمس
+  _submitting = true;
+  const btn = document.querySelector && document.querySelector('.sh-foot .btn.pri');
+  if (btn) btn.disabled = true;
+  try { submitFormInner(); } finally { _submitting = false; if (btn) btn.disabled = false; }
+}
+function submitFormInner() {
   const o = readForm();
   for (const f of formFields) {
     if (f.when && !f.when(o)) continue;
@@ -970,7 +978,7 @@ function exportData() {
   if (window.Android && Android.saveFile) {
     const r = Android.saveFile(name, json);
     if (r && r.indexOf('ok:') === 0) info('پشتیبان ذخیره شد', `<p>فایل در پوشه <b>Download</b> گوشی ذخیره شد:</p><p dir="ltr" style="text-align:left">${esc(r.slice(3))}</p>`);
-    else if (r === 'shared') { } else toast('خطا: ' + r);
+    else if (r === 'shared') { } else toast('ذخیره فایل پشتیبان انجام نشد؛ دوباره تلاش کنید');
     return;
   }
   const a = document.createElement('a');

@@ -1,0 +1,11 @@
+<!doctype html>
+<html><head><meta charset="utf-8"></head><body>
+<script>
+// فقط یک بار اجرا می‌شود: اطلاعات localStorage مبدأ قدیمی (file://) به برنامه داده می‌شود تا در مبدأ جدید بازیابی شود
+(function () {
+  var o = {};
+  try { for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); o[k] = localStorage.getItem(k); } } catch (e) { }
+  try { Android.saveMigration(JSON.stringify(o)); } catch (e) { }
+})();
+</script>
+</body></html>

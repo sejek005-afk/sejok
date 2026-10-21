@@ -1,71 +1,78 @@
 package ir.sejok.contractor;
 
 import android.app.Activity;
+import android.app.NotificationManager;
+import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
-import android.app.NotificationManager;
+import android.graphics.Canvas;
+import android.graphics.pdf.PdfDocument;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
-import android.provider.MediaStore;
-import android.graphics.Canvas;
-import android.graphics.pdf.PdfDocument;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.StrictMode;
-import android.view.View;
-import android.view.Window;
-import android.widget.FrameLayout;
+import android.provider.MediaStore;
+import android.util.Log;
+import android.view.ViewGroup;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
+
+import androidx.core.content.FileProvider;
+import androidx.webkit.WebViewAssetLoader;
+
+import org.json.JSONObject;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 
 public class MainActivity extends Activity {
+    private static final String TAG = "Rawano";
     private static final int FILE_REQ = 1001;
+    /** مبدأ امن برای بارگذاری فایل‌های برنامه به‌جای file:// */
+    static final String ORIGIN = "https://appassets.androidplatform.net";
+    private static final String MAIN_URL = ORIGIN + "/assets/index.html";
+    private static final String MIGRATE_URL = "file:///android_asset/migrate.html";
+    private static final String MIGRATION_FILE = "origin_migration.json";
+    private static final int MAX_BACKUP_CHARS = 30 * 1024 * 1024;
+    private static final int MAX_HTML_CHARS = 10 * 1024 * 1024;
+
     private WebView web;
-    private ValueCallback<Uri[]> fileCallback;
-    private FrameLayout root;
     private WebView pdfView;
+    private FrameLayout root;
+    private WebViewAssetLoader assetLoader;
+    private ValueCallback<Uri[]> fileCallback;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean pendingOpenNotes = false;
+    private boolean pdfBusy = false;
+    private int pdfToken = 0;
 
-    private void openNotes() {
-        handler.postDelayed(() -> web.evaluateJavascript("window.openTab && window.openTab('notes')", null), 300);
-    }
-
-    @Override
-    protected void onNewIntent(Intent intent) {
-        super.onNewIntent(intent);
-        setIntent(intent);
-        if (intent != null && intent.getBooleanExtra("openNotes", false)) openNotes();
-    }
-
-    @Override
-    protected void onResume() {
-        super.onResume();
-        if (web != null) web.evaluateJavascript("window.render && window.render()", null);
-    }
-
+    // ---------- چرخه حیات ----------
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        Window win = getWindow();
-        if (Build.VERSION.SDK_INT >= 21) win.setStatusBarColor(0xFF0B5754);
-
-        // برای رسم کامل صفحه فاکتور در PDF
+        if (Build.VERSION.SDK_INT >= 21) getWindow().setStatusBarColor(0xFF0B5754);
+        // برای رسم کامل صفحه فاکتور در PDF (باید قبل از ساخت WebView صدا زده شود)
         if (Build.VERSION.SDK_INT >= 21) WebView.enableSlowWholeDocumentDraw();
-        // اجازه اشتراک فایل در اندرویدهای قدیمی
-        StrictMode.setVmPolicy(new StrictMode.VmPolicy.Builder().build());
+
+        assetLoader = new WebViewAssetLoader.Builder()
+                .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
+                .build();
 
         root = new FrameLayout(this);
         web = new WebView(this);
@@ -75,14 +82,31 @@ public class MainActivity extends Activity {
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
-        s.setDatabaseEnabled(true);
-        s.setAllowFileAccess(true);
+        s.setAllowFileAccess(false);
+        s.setAllowContentAccess(false);
         s.setTextZoom(100);
 
         web.setWebViewClient(new WebViewClient() {
             @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                return assetLoader.shouldInterceptRequest(request.getUrl());
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                // هیچ صفحه بیرونی داخل برنامه باز نمی‌شود
+                return !request.getUrl().toString().startsWith(ORIGIN);
+            }
+
+            @SuppressWarnings("deprecation")
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                return url == null || !url.startsWith(ORIGIN);
+            }
+
+            @Override
             public void onPageFinished(WebView view, String url) {
-                if (pendingOpenNotes) { pendingOpenNotes = false; openNotes(); }
+                if (url != null && url.startsWith(ORIGIN) && pendingOpenNotes) { pendingOpenNotes = false; openNotes(); }
             }
         });
         pendingOpenNotes = getIntent() != null && getIntent().getBooleanExtra("openNotes", false);
@@ -95,7 +119,7 @@ public class MainActivity extends Activity {
                 i.addCategory(Intent.CATEGORY_OPENABLE);
                 i.setType("*/*");
                 try {
-                    startActivityForResult(Intent.createChooser(i, "انتخاب فایل پشتیبان"), FILE_REQ);
+                    startActivityForResult(Intent.createChooser(i, "انتخاب فایل"), FILE_REQ);
                 } catch (Exception e) {
                     fileCallback = null;
                     return false;
@@ -105,14 +129,47 @@ public class MainActivity extends Activity {
         });
         web.addJavascriptInterface(new Bridge(), "Android");
 
-        if (savedInstanceState != null) web.restoreState(savedInstanceState);
-        else web.loadUrl("file:///android_asset/index.html");
+        // نسخه‌های قبلی اطلاعات را در localStorage مبدأ file:// نگه می‌داشتند؛ یک بار به مبدأ جدید منتقل می‌شود
+        if (prefs().getBoolean("originMigrated", false)) web.loadUrl(MAIN_URL);
+        else web.loadUrl(MIGRATE_URL);
+    }
+
+    private SharedPreferences prefs() { return getSharedPreferences("rawano_app", MODE_PRIVATE); }
+
+    @Override
+    protected void onPause() {
+        if (web != null) web.onPause();
+        super.onPause();
     }
 
     @Override
-    protected void onSaveInstanceState(Bundle outState) {
-        super.onSaveInstanceState(outState);
-        web.saveState(outState);
+    protected void onResume() {
+        super.onResume();
+        if (web != null) web.onResume();
+    }
+
+    @Override
+    protected void onDestroy() {
+        handler.removeCallbacksAndMessages(null);
+        destroyPdfView();
+        if (web != null) {
+            ViewGroup p = (ViewGroup) web.getParent();
+            if (p != null) p.removeView(web);
+            web.destroy();
+            web = null;
+        }
+        super.onDestroy();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (intent != null && intent.getBooleanExtra("openNotes", false)) openNotes();
+    }
+
+    private void openNotes() {
+        handler.postDelayed(() -> js("window.openTab && window.openTab('notes')"), 300);
     }
 
     @Override
@@ -126,47 +183,165 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (web == null) { finish(); return; }
         web.evaluateJavascript("(window.appBack && window.appBack()) ? 'y' : 'n'", value -> {
             if (value == null || !value.contains("y")) finish();
         });
     }
 
-    // ---------- ساخت PDF از HTML فاکتور ----------
-    private void startPdf(final String html, final String name, final String action) {
-        if (pdfView != null) { root.removeView(pdfView); pdfView.destroy(); pdfView = null; }
+    // ---------- ابزارها ----------
+    private void js(String code) {
+        if (web != null) web.evaluateJavascript(code, null);
+    }
+
+    private void jsToast(String msg) {
+        js("window.toast && toast(" + JSONObject.quote(msg) + ")");
+    }
+
+    /** نام فایل امن: بدون مسیر و جداکننده، با پسوند مشخص */
+    static String safeName(String name, String ext) {
+        String n = name == null ? "" : name;
+        n = n.replaceAll("[^\\p{L}\\p{N}._-]", "_").replaceAll("\\.{2,}", ".").replaceAll("^[._]+", "");
+        if (n.length() > 80) n = n.substring(0, 80);
+        if (!n.toLowerCase(Locale.ROOT).endsWith(ext)) n = n + ext;
+        if (n.length() <= ext.length()) n = "rawano" + ext;
+        return n;
+    }
+
+    /** پوشه خروجی‌ها برای اشتراک با FileProvider (اندروید ۹ و پایین‌تر) */
+    private File exportDir() {
+        File base = getExternalFilesDir(null);
+        File dir = new File(base != null ? base : getFilesDir(), "exports");
+        if (!dir.exists() && !dir.mkdirs()) dir = new File(getFilesDir(), "exports");
+        dir.mkdirs();
+        return dir;
+    }
+
+    private Uri shareUri(File f) {
+        return FileProvider.getUriForFile(this, getPackageName() + ".files", f);
+    }
+
+    /** ذخیره در Download با MediaStore (اندروید ۱۰+)؛ ردیف ناقص در صورت خطا حذف می‌شود */
+    private Uri writeToDownloads(String name, String mime, String sub, Writer writer) throws IOException {
+        ContentResolver cr = getContentResolver();
+        ContentValues cv = new ContentValues();
+        cv.put(MediaStore.Downloads.DISPLAY_NAME, name);
+        cv.put(MediaStore.Downloads.MIME_TYPE, mime);
+        cv.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + sub);
+        cv.put(MediaStore.Downloads.IS_PENDING, 1);
+        Uri uri = cr.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
+        if (uri == null) throw new IOException("insert failed");
+        try (OutputStream os = cr.openOutputStream(uri)) {
+            if (os == null) throw new IOException("no stream");
+            writer.write(os);
+        } catch (IOException | RuntimeException e) {
+            cr.delete(uri, null, null);
+            throw e;
+        }
+        ContentValues done = new ContentValues();
+        done.put(MediaStore.Downloads.IS_PENDING, 0);
+        cr.update(uri, done, null, null);
+        return uri;
+    }
+
+    private File writeToExports(String name, Writer writer) throws IOException {
+        File f = new File(exportDir(), name);
+        try (OutputStream os = new FileOutputStream(f)) {
+            writer.write(os);
+        } catch (IOException | RuntimeException e) {
+            //noinspection ResultOfMethodCallIgnored
+            f.delete();
+            throw e;
+        }
+        return f;
+    }
+
+    private interface Writer { void write(OutputStream os) throws IOException; }
+
+    private void share(Uri uri, String mime, String title) {
+        Intent i = new Intent(Intent.ACTION_SEND);
+        i.setType(mime);
+        i.putExtra(Intent.EXTRA_STREAM, uri);
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        startActivity(Intent.createChooser(i, title));
+    }
+
+    // ---------- ساخت PDF ----------
+    private void destroyPdfView() {
+        if (pdfView != null) {
+            if (root != null) root.removeView(pdfView);
+            pdfView.destroy();
+            pdfView = null;
+        }
+    }
+
+    private void finishPdf(int token, String result) {
+        if (token != pdfToken) return;
+        pdfBusy = false;
+        destroyPdfView();
+        js("window.onPdfDone && window.onPdfDone(" + JSONObject.quote(result) + ")");
+    }
+
+    private void startPdf(final String html, final String rawName, final String action) {
+        if (pdfBusy) { jsToast("ساخت PDF قبلی هنوز تمام نشده است"); return; }
+        if (html == null || html.length() > MAX_HTML_CHARS) { js("window.onPdfDone && window.onPdfDone('err')"); return; }
+        pdfBusy = true;
+        final int token = ++pdfToken;
+        final String name = safeName(rawName, ".pdf");
         final float density = getResources().getDisplayMetrics().density;
         final int widthPx = Math.round(794 * density);
-        pdfView = new WebView(this);
-        WebSettings ps = pdfView.getSettings();
+        destroyPdfView();
+        final WebView pv = new WebView(this);
+        pdfView = pv;
+        WebSettings ps = pv.getSettings();
         ps.setJavaScriptEnabled(false);
-        ps.setAllowFileAccess(true);
+        ps.setAllowFileAccess(false);
+        ps.setAllowContentAccess(false);
         ps.setTextZoom(100);
         ps.setLoadWithOverviewMode(false);
         ps.setUseWideViewPort(true);
-        pdfView.setVerticalScrollBarEnabled(false);
-        pdfView.setHorizontalScrollBarEnabled(false);
-        pdfView.setBackgroundColor(0xFFFFFFFF);
+        pv.setVerticalScrollBarEnabled(false);
+        pv.setHorizontalScrollBarEnabled(false);
+        pv.setBackgroundColor(0xFFFFFFFF);
         // پشت صفحه اصلی و خارج از دید
-        root.addView(pdfView, 0, new FrameLayout.LayoutParams(widthPx, Math.round(1123 * density)));
-        pdfView.setWebViewClient(new WebViewClient() {
-            boolean done = false;
+        root.addView(pv, 0, new FrameLayout.LayoutParams(widthPx, Math.round(1123 * density)));
+        pv.setWebViewClient(new WebViewClient() {
+            boolean started = false;
+
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                return assetLoader.shouldInterceptRequest(request.getUrl());
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) { return true; }
+
+            @SuppressWarnings("deprecation")
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) { return true; }
+
             @Override
             public void onPageFinished(WebView view, String url) {
-                if (done) return;
-                done = true;
+                if (started || token != pdfToken) return;
+                started = true;
                 handler.postDelayed(() -> {
-                    int h = Math.round(view.getContentHeight() * density);
+                    if (token != pdfToken || pdfView != pv) return;
+                    int h = Math.round(pv.getContentHeight() * density);
                     if (h < 100) h = Math.round(1123 * density);
-                    view.setLayoutParams(new FrameLayout.LayoutParams(widthPx, h));
+                    pv.setLayoutParams(new FrameLayout.LayoutParams(widthPx, h));
                     final int fh = h;
-                    handler.postDelayed(() -> renderPdf(view, widthPx, fh, name, action), 450);
+                    handler.postDelayed(() -> {
+                        if (token == pdfToken && pdfView == pv) renderPdf(token, pv, widthPx, fh, name, action);
+                    }, 450);
                 }, 500);
             }
         });
-        pdfView.loadDataWithBaseURL("file:///android_asset/", html, "text/html", "utf-8", null);
+        // اگر بارگذاری هرگز تمام نشد، قفل آزاد شود
+        handler.postDelayed(() -> { if (token == pdfToken && pdfBusy) finishPdf(token, "err"); }, 30000);
+        pv.loadDataWithBaseURL(ORIGIN + "/assets/", html, "text/html", "utf-8", null);
     }
 
-    private void renderPdf(WebView view, int widthPx, int heightPx, String name, String action) {
+    private void renderPdf(int token, WebView view, int widthPx, int heightPx, String name, String action) {
         String result;
         PdfDocument doc = new PdfDocument();
         try {
@@ -188,60 +363,79 @@ public class MainActivity extends Activity {
             Uri uri;
             String where;
             if (Build.VERSION.SDK_INT >= 29) {
-                ContentValues cv = new ContentValues();
-                cv.put(MediaStore.Downloads.DISPLAY_NAME, name);
-                cv.put(MediaStore.Downloads.MIME_TYPE, "application/pdf");
-                cv.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Rawano");
-                uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
-                if (uri == null) throw new Exception("cannot create file");
-                OutputStream os = getContentResolver().openOutputStream(uri);
-                doc.writeTo(os);
-                os.close();
+                uri = writeToDownloads(name, "application/pdf", "/Rawano", doc::writeTo);
                 where = "Download/Rawano/" + name;
             } else {
-                File dir = getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS);
-                if (dir == null) dir = getFilesDir();
-                dir.mkdirs();
-                File f = new File(dir, name);
-                FileOutputStream os = new FileOutputStream(f);
-                doc.writeTo(os);
-                os.close();
-                uri = Uri.fromFile(f);
+                File f = writeToExports(name, doc::writeTo);
+                uri = shareUri(f);
                 where = f.getAbsolutePath();
             }
             if ("share".equals(action)) {
-                Intent i = new Intent(Intent.ACTION_SEND);
-                i.setType("application/pdf");
-                i.putExtra(Intent.EXTRA_STREAM, uri);
-                i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                startActivity(Intent.createChooser(i, "ارسال فاکتور"));
+                share(uri, "application/pdf", "ارسال PDF");
                 result = "shared";
             } else {
                 result = "ok:" + where;
             }
         } catch (Exception e) {
-            result = "err:" + e.getMessage();
+            Log.e(TAG, "PDF failed", e);
+            result = "err";
         } finally {
             doc.close();
-            root.removeView(view);
-            view.destroy();
-            if (pdfView == view) pdfView = null;
         }
-        final String r = result.replace("\\", "/").replace("'", " ");
-        web.evaluateJavascript("window.onPdfDone && window.onPdfDone('" + r + "')", null);
+        finishPdf(token, result);
     }
 
-    private void jsToast(String msg) {
-        web.evaluateJavascript("window.toast && toast('" + msg + "')", null);
-    }
-
+    // ---------- پل جاوااسکریپت ----------
     private class Bridge {
+        @JavascriptInterface
+        public String appVersion() { return BuildConfig.VERSION_NAME; }
+
+        // انتقال یک‌باره اطلاعات از مبدأ قدیمی file:// به مبدأ جدید
+        @JavascriptInterface
+        public void saveMigration(String json) {
+            boolean ok = true;
+            if (json != null && json.contains("contractor_db_v1")) {
+                File f = new File(getFilesDir(), MIGRATION_FILE);
+                try (OutputStream os = new FileOutputStream(f)) {
+                    os.write(json.getBytes(StandardCharsets.UTF_8));
+                } catch (IOException e) {
+                    Log.e(TAG, "migration save failed", e);
+                    ok = false;
+                }
+            }
+            if (ok) prefs().edit().putBoolean("originMigrated", true).apply();
+            runOnUiThread(() -> { if (web != null) web.loadUrl(MAIN_URL); });
+        }
+
+        @JavascriptInterface
+        public String takeMigration() {
+            File f = new File(getFilesDir(), MIGRATION_FILE);
+            if (!f.exists()) return "";
+            try (FileInputStream in = new FileInputStream(f)) {
+                byte[] b = new byte[(int) f.length()];
+                int off = 0, r;
+                while (off < b.length && (r = in.read(b, off, b.length - off)) > 0) off += r;
+                return new String(b, 0, off, StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                Log.e(TAG, "migration read failed", e);
+                return "";
+            }
+        }
+
+        @JavascriptInterface
+        public void migrationDone() {
+            //noinspection ResultOfMethodCallIgnored
+            new File(getFilesDir(), MIGRATION_FILE).delete();
+        }
+
         @JavascriptInterface
         public void openUrl(final String url) {
             runOnUiThread(() -> {
                 try {
-                    Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-                    startActivity(i);
+                    Uri u = Uri.parse(url == null ? "" : url);
+                    String sc = u.getScheme() == null ? "" : u.getScheme().toLowerCase(Locale.ROOT);
+                    if (!sc.equals("https") && !sc.equals("tel") && !sc.equals("sms") && !sc.equals("smsto")) return;
+                    startActivity(new Intent(Intent.ACTION_VIEW, u));
                 } catch (Exception e) {
                     jsToast("برنامه‌ای برای باز کردن پیدا نشد");
                 }
@@ -250,14 +444,15 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void sendSms(final String phone, final String text) {
+            final String ph = phone == null ? "" : phone.replaceAll("[^0-9+]", "");
             runOnUiThread(() -> {
                 try {
-                    Intent i = new Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + (phone == null ? "" : phone)));
+                    Intent i = new Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + ph));
                     i.putExtra("sms_body", text);
                     startActivity(i);
                 } catch (Exception e) {
                     try {
-                        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse("sms:" + (phone == null ? "" : phone)));
+                        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse("sms:" + ph));
                         i.putExtra("sms_body", text);
                         startActivity(i);
                     } catch (Exception e2) { jsToast("برنامه پیامک پیدا نشد"); }
@@ -271,7 +466,7 @@ public class MainActivity extends Activity {
                 Intent i = new Intent(Intent.ACTION_SEND);
                 i.setType("text/plain");
                 i.putExtra(Intent.EXTRA_TEXT, text);
-                try { startActivity(Intent.createChooser(i, "ارسال")); } catch (Exception ignored) {}
+                try { startActivity(Intent.createChooser(i, "ارسال")); } catch (Exception ignored) { }
             });
         }
 
@@ -304,7 +499,7 @@ public class MainActivity extends Activity {
                         i.setAction(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
                         i.setData(Uri.parse("package:" + getPackageName()));
                     }
-                    try { startActivity(i); } catch (Exception ignored) {}
+                    try { startActivity(i); } catch (Exception ignored) { }
                 }
             });
         }
@@ -315,31 +510,27 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
-        public String saveFile(String name, String content) {
+        public String saveFile(String rawName, String content) {
+            if (content == null || content.length() > MAX_BACKUP_CHARS) return "err";
+            final String name = safeName(rawName, ".json");
+            final byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
             try {
                 if (Build.VERSION.SDK_INT >= 29) {
-                    ContentValues cv = new ContentValues();
-                    cv.put(MediaStore.Downloads.DISPLAY_NAME, name);
-                    cv.put(MediaStore.Downloads.MIME_TYPE, "application/json");
-                    cv.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
-                    Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
-                    if (uri == null) return "err:cannot create file";
-                    OutputStream os = getContentResolver().openOutputStream(uri);
-                    os.write(content.getBytes(StandardCharsets.UTF_8));
-                    os.close();
+                    writeToDownloads(name, "application/json", "", os -> os.write(bytes));
                     return "ok:Download/" + name;
                 } else {
+                    // اندروید ۹ و پایین‌تر: فایل ساخته و به‌صورت پیوست (نه متن) ارسال می‌شود
+                    final File f = writeToExports(name, os -> os.write(bytes));
+                    final Uri uri = shareUri(f);
                     runOnUiThread(() -> {
-                        Intent i = new Intent(Intent.ACTION_SEND);
-                        i.setType("text/plain");
-                        i.putExtra(Intent.EXTRA_SUBJECT, name);
-                        i.putExtra(Intent.EXTRA_TEXT, content);
-                        startActivity(Intent.createChooser(i, "ارسال فایل پشتیبان"));
+                        try { share(uri, "application/json", "ذخیره یا ارسال فایل پشتیبان"); }
+                        catch (Exception e) { Log.e(TAG, "share failed", e); }
                     });
                     return "shared";
                 }
             } catch (Exception e) {
-                return "err:" + e.getMessage();
+                Log.e(TAG, "saveFile failed", e);
+                return "err";
             }
         }
     }

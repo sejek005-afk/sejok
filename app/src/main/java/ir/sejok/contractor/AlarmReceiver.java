@@ -11,6 +11,7 @@ public class AlarmReceiver extends BroadcastReceiver {
         String a = i.getAction();
         int id = i.getIntExtra("id", 0);
         if (Alarms.ACTION_FIRE.equals(a)) {
+            Alarms.markFired(c, id);
             Alarms.show(c, id, i.getStringExtra("title"), i.getStringExtra("text"), i.getStringExtra("tag"));
         } else if (Alarms.ACTION_DISMISS.equals(a)) {
             NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);

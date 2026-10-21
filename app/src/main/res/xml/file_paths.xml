@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- فقط پوشه خروجی‌های برنامه (PDF و پشتیبان) قابل اشتراک است -->
+<paths>
+    <external-files-path name="exports" path="exports/" />
+    <files-path name="exports_internal" path="exports/" />
+</paths>

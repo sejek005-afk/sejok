@@ -463,5 +463,5 @@ window.onPdfDone = r => {
   if (!r) return;
   if (r.indexOf('ok:') === 0) info('PDF ذخیره شد', `<p>فایل در پوشه <b>Download</b> گوشی ذخیره شد:</p><p dir="ltr" style="text-align:left">${esc(r.slice(3))}</p>`);
   else if (r === 'shared') { }
-  else toast('خطا در ساخت PDF: ' + r);
+  else toast('ساخت PDF انجام نشد؛ دوباره تلاش کنید');
 };

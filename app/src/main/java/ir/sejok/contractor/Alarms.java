@@ -56,6 +56,62 @@ public final class Alarms {
         scheduleAll(c);
     }
 
+    /** وقتی زنگی به صدا درآمد علامت می‌خورد تا بعد از ری‌استارت دوباره «از دست رفته» حساب نشود */
+    static synchronized void markFired(Context c, int id) {
+        SharedPreferences sp = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        try {
+            JSONArray arr = new JSONArray(sp.getString("list", "[]"));
+            for (int k = 0; k < arr.length(); k++) {
+                JSONObject o = arr.getJSONObject(k);
+                if (o.optInt("id") == id) o.put("f", true);
+            }
+            sp.edit().putString("list", arr.toString()).apply();
+        } catch (Exception ignored) {}
+    }
+
+    /** بعد از روشن شدن گوشی: یادآورهایی که وقتشان در زمان خاموشی گذشته یک‌جا اعلان می‌شوند و بقیه دوباره تنظیم می‌شوند */
+    static synchronized void handleBoot(Context c) {
+        SharedPreferences sp = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        java.util.List<String> missed = new java.util.ArrayList<>();
+        try {
+            JSONArray arr = new JSONArray(sp.getString("list", "[]"));
+            long now = System.currentTimeMillis();
+            for (int k = 0; k < arr.length(); k++) {
+                JSONObject o = arr.getJSONObject(k);
+                if (o.optLong("t") <= now && !o.optBoolean("f")) {
+                    missed.add(o.optString("title", "یادآور"));
+                    o.put("f", true);
+                }
+            }
+            sp.edit().putString("list", arr.toString()).apply();
+        } catch (Exception ignored) {}
+        if (!missed.isEmpty()) showMissed(c, missed);
+        scheduleAll(c);
+    }
+
+    @SuppressWarnings("deprecation")
+    private static void showMissed(Context c, java.util.List<String> titles) {
+        ensureChannel(c);
+        NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
+        Intent open = new Intent(c, MainActivity.class).putExtra("openNotes", true)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        PendingIntent openPi = PendingIntent.getActivity(c, 400000, open, PendingIntent.FLAG_UPDATE_CURRENT | immutable());
+        Notification.InboxStyle style = new Notification.InboxStyle();
+        for (int k = 0; k < titles.size() && k < 7; k++) style.addLine(titles.get(k));
+        if (titles.size() > 7) style.setSummaryText("و " + (titles.size() - 7) + " مورد دیگر");
+        String title = titles.size() + " یادآور از دست رفته (گوشی خاموش بود)";
+        Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(c, CHANNEL) : new Notification.Builder(c);
+        b.setSmallIcon(R.drawable.ic_stat_note)
+                .setContentTitle(title)
+                .setContentText(titles.get(0))
+                .setStyle(style)
+                .setAutoCancel(true)
+                .setContentIntent(openPi)
+                .setColor(0xFFC8452F);
+        if (Build.VERSION.SDK_INT < 26) b.setPriority(Notification.PRIORITY_HIGH).setDefaults(Notification.DEFAULT_ALL);
+        nm.notify(999999, b.build());
+    }
+
     static synchronized void scheduleAll(Context c) {
         SharedPreferences sp = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         try {

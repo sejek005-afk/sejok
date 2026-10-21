@@ -4,7 +4,7 @@ const vm = require('vm');
 const fs = require('fs');
 const path = require('path');
 const ASSETS = path.join(__dirname, '..', 'app', 'src', 'main', 'assets');
-const FILES = ['jalali.js', 'validate.js', 'app.js', 'invoice.js', 'statement.js', 'notes.js'];
+const FILES = ['migrate-in.js', 'jalali.js', 'validate.js', 'app.js', 'invoice.js', 'statement.js', 'notes.js'];
 
 function makeEl() {
   return {
