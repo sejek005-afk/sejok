@@ -1,0 +1,10 @@
+---
+# استقرار خودکار سرور ایشیم از cPanel ← Git Version Control ← Deploy HEAD Commit
+# فقط فایل‌های پوشه server در public_html/api کپی می‌شوند؛ config.php دست نمی‌خورد.
+deployment:
+  tasks:
+    - export DEPLOYPATH=/home/h438354/public_html/api/
+    - /bin/mkdir -p $DEPLOYPATH
+    - /bin/cp server/index.php server/lib.php server/.htaccess $DEPLOYPATH
+    - /bin/sh -c "test -f ${DEPLOYPATH}config.php || /bin/cp server/install.php $DEPLOYPATH"
+    - /bin/sh -c "test -f ${DEPLOYPATH}config.php && /bin/rm -f ${DEPLOYPATH}install.php; true"
