@@ -36,7 +36,8 @@ function db(array $cfg): PDO {
     try {
         if (($cfg['driver'] ?? 'mysql') === 'sqlite') {
             $pdo = new PDO('sqlite:' . $cfg['sqlite_path']);
-            $pdo->exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;');
+            $pdo->exec('PRAGMA busy_timeout=10000');
+            $pdo->exec('PRAGMA journal_mode=WAL');
         } else {
             $dsn = 'mysql:host=' . $cfg['db_host'] . ';dbname=' . $cfg['db_name'] . ';charset=utf8mb4';
             $pdo = new PDO($dsn, $cfg['db_user'], $cfg['db_pass']);

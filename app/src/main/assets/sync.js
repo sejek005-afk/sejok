@@ -7,7 +7,8 @@
 const SYNC_KEY = 'eshim_sync';
 const SYNC_COLLS = ['cats', 'projects', 'workers', 'installers', 'contractors', 'progress', 'tx', 'adj', 'notes', 'cheques', 'invoices', 'statements'];
 const ID_RANGE = 1e9;
-const DEFAULT_SERVER = 'https://eshim.ir/api/';
+// تا وقتی دامنه eshim.ir فعال شود، از نشانی میزبان هاست استفاده می‌شود
+const DEFAULT_SERVER = 'https://1496118093.cloudylink.com/~h438354/api/';
 let SY = syLoad();
 let syBusy = false, syAgain = false, syTimer = null, syApplying = false, syErr = '', syRenderLater = false;
 

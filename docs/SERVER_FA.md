@@ -2,7 +2,7 @@
 
 سرور فقط سه فایل PHP دارد (پوشه `server/`) و با PHP 8 و MySQL کار می‌کند.
 
-1. در cPanel ← **Manage My Databases**: یک پایگاه داده (مثلاً `eshim`) و یک کاربر با رمز قوی بسازید و کاربر را با **ALL PRIVILEGES** به پایگاه داده اضافه کنید.
+1. پیش‌فرض نصب، فایل SQLite بیرون از public_html است و پایگاه داده جداگانه لازم ندارد. (اگر MySQL می‌خواهید: در cPanel ← **Manage My Databases** پایگاه داده و کاربر بسازید و کاربر را با **ALL PRIVILEGES** اضافه کنید.)
 2. در **File Manager** داخل `public_html` پوشه‌ای به نام `api` بسازید و فایل‌های `index.php`، `lib.php`، `install.php` و `.htaccess` را در آن بگذارید.
 3. مطمئن شوید SSL دامنه فعال است، بعد `https://دامنه/api/install.php` را باز کنید، اطلاعات پایگاه داده و حساب مدیر را وارد کنید و «نصب» را بزنید.
 4. بعد از نصب، فایل `install.php` را پاک کنید.

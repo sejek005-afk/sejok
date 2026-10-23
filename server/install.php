@@ -32,6 +32,7 @@ if (is_file(config_path())) {
 $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
 $errors = [];
 $v = [
+    'driver' => extension_loaded('pdo_sqlite') ? 'sqlite' : 'mysql',
     'db_host' => 'localhost', 'db_name' => '', 'db_user' => '',
     'admin_user' => 'admin', 'admin_name' => '',
 ];
@@ -42,12 +43,31 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     $p1 = (string) ($_POST['admin_pass'] ?? '');
     $p2 = (string) ($_POST['admin_pass2'] ?? '');
 
-    if ($v['db_host'] === '' || $v['db_name'] === '' || $v['db_user'] === '') $errors[] = 'اطلاعات پایگاه داده کامل نیست.';
+    if ($v['driver'] !== 'sqlite') $v['driver'] = 'mysql';
+    if ($v['driver'] === 'sqlite' && !extension_loaded('pdo_sqlite')) $errors[] = 'روی این هاست SQLite فعال نیست؛ گزینه MySQL را انتخاب کنید.';
+    if ($v['driver'] === 'mysql' && ($v['db_host'] === '' || $v['db_name'] === '' || $v['db_user'] === '')) $errors[] = 'اطلاعات پایگاه داده کامل نیست.';
     if (!valid_username($v['admin_user'])) $errors[] = 'نام کاربری مدیر فقط حروف انگلیسی، عدد و . _ - (۳ تا ۳۲ کاراکتر).';
     if (!valid_password($p1)) $errors[] = 'رمز مدیر باید حداقل ۸ کاراکتر باشد.';
     if ($p1 !== $p2) $errors[] = 'رمز مدیر و تکرار آن یکی نیستند.';
 
     if (!$errors) {
+        if ($v['driver'] === 'sqlite') {
+            // فایل اطلاعات بیرون از public_html نگه داشته می‌شود تا از اینترنت قابل دانلود نباشد
+            $dir = dirname(__DIR__, 2) . '/eshim-data';
+            if (!is_dir($dir) && !@mkdir($dir, 0700, true)) $errors[] = 'پوشه اطلاعات ساخته نشد: ' . $dir;
+            @file_put_contents($dir . '/.htaccess', "Require all denied\n");
+            $cfg = ['driver' => 'sqlite', 'sqlite_path' => $dir . '/eshim.sqlite', 'allowed_origins' => ['https://appassets.androidplatform.net']];
+            if (!$errors) {
+                try {
+                    $pdo = new PDO('sqlite:' . $cfg['sqlite_path'], null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
+                    $pdo->exec('PRAGMA journal_mode=WAL');
+                    @chmod($cfg['sqlite_path'], 0600);
+                } catch (Throwable $e) {
+                    error_log('eshim install sqlite: ' . $e->getMessage());
+                    $errors[] = 'فایل پایگاه داده SQLite ساخته نشد.';
+                }
+            }
+        } else {
         $cfg = [
             'driver' => 'mysql',
             'db_host' => $v['db_host'], 'db_name' => $v['db_name'], 'db_user' => $v['db_user'], 'db_pass' => $dbPass,
@@ -60,6 +80,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         } catch (Throwable $e) {
             error_log('eshim install db: ' . $e->getMessage());
             $errors[] = 'اتصال به پایگاه داده برقرار نشد. نام پایگاه داده، نام کاربری و رمز آن را بررسی کنید (در cPanel نام‌ها معمولاً با پیشوند حساب شروع می‌شوند).';
+        }
         }
         if (!$errors) {
             try {
@@ -96,15 +117,21 @@ $body = '<h1>نصب سرور ایشیم</h1>';
 if (!$https) $body .= '<div class="warn">این صفحه با HTTPS باز نشده است. بهتر است اول گواهی SSL دامنه فعال شود و صفحه با <code>https://</code> باز شود تا رمزها امن منتقل شوند.</div>';
 foreach ($errors as $e) $body .= '<div class="err">' . h($e) . '</div>';
 $body .= '<form method="post" autocomplete="off">'
+    . '<h2>محل ذخیره اطلاعات</h2>'
+    . '<label><input type="radio" name="driver" value="sqlite" style="width:auto"' . ($v['driver'] === 'sqlite' ? ' checked' : '') . (extension_loaded('pdo_sqlite') ? '' : ' disabled') . ' onchange="tg()"> فایل SQLite روی همین هاست (پیشنهادی؛ تنظیم دیگری لازم نیست)</label>'
+    . '<label><input type="radio" name="driver" value="mysql" style="width:auto"' . ($v['driver'] === 'mysql' ? ' checked' : '') . ' onchange="tg()"> پایگاه داده MySQL</label>'
+    . '<div id="my">'
     . '<h2>پایگاه داده MySQL (از بخش Databases در cPanel)</h2>'
     . '<label>میزبان</label><input name="db_host" dir="ltr" value="' . h($v['db_host']) . '">'
     . '<label>نام پایگاه داده</label><input name="db_name" dir="ltr" value="' . h($v['db_name']) . '" placeholder="cpuser_eshim">'
     . '<label>نام کاربری پایگاه داده</label><input name="db_user" dir="ltr" value="' . h($v['db_user']) . '" placeholder="cpuser_eshim">'
     . '<label>رمز پایگاه داده</label><input name="db_pass" type="password" dir="ltr">'
+    . '</div>'
     . '<h2>حساب مدیر برنامه</h2>'
     . '<label>نام کاربری (انگلیسی)</label><input name="admin_user" dir="ltr" value="' . h($v['admin_user']) . '">'
     . '<label>نام نمایشی</label><input name="admin_name" value="' . h($v['admin_name']) . '">'
     . '<label>رمز (حداقل ۸ کاراکتر)</label><input name="admin_pass" type="password" dir="ltr">'
     . '<label>تکرار رمز</label><input name="admin_pass2" type="password" dir="ltr">'
-    . '<button type="submit">نصب</button></form>';
+    . '<button type="submit">نصب</button></form>'
+    . '<script>function tg(){var m=document.querySelector(\'input[name=driver][value=mysql]\').checked;document.getElementById(\'my\').style.display=m?\'\':\'none\'}tg()</script>';
 page($body);
