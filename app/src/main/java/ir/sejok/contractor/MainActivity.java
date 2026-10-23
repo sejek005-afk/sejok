@@ -44,7 +44,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
 public class MainActivity extends Activity {
-    private static final String TAG = "Rawano";
+    private static final String TAG = "Eshim";
     private static final int FILE_REQ = 1001;
     /** مبدأ امن برای بارگذاری فایل‌های برنامه به‌جای file:// */
     static final String ORIGIN = "https://appassets.androidplatform.net";
@@ -208,7 +208,7 @@ public class MainActivity extends Activity {
         n = n.replaceAll("[^\\p{L}\\p{N}._-]", "_").replaceAll("\\.{2,}", ".").replaceAll("^[._]+", "");
         if (n.length() > 80) n = n.substring(0, 80);
         if (!n.toLowerCase(Locale.ROOT).endsWith(ext)) n = n + ext;
-        if (n.length() <= ext.length()) n = "rawano" + ext;
+        if (n.length() <= ext.length()) n = "eshim" + ext;
         return n;
     }
 
@@ -368,8 +368,8 @@ public class MainActivity extends Activity {
             Uri uri;
             String where;
             if (Build.VERSION.SDK_INT >= 29) {
-                uri = writeToDownloads(name, "application/pdf", "/Rawano", doc::writeTo);
-                where = "Download/Rawano/" + name;
+                uri = writeToDownloads(name, "application/pdf", "/Eshim", doc::writeTo);
+                where = "Download/Eshim/" + name;
             } else {
                 File f = writeToExports(name, doc::writeTo);
                 uri = shareUri(f);

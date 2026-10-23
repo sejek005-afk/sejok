@@ -151,7 +151,7 @@ public final class Alarms {
         if (Build.VERSION.SDK_INT < 26) return;
         NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm.getNotificationChannel(CHANNEL) != null) return;
-        NotificationChannel ch = new NotificationChannel(CHANNEL, "یادآورهای راوانو", NotificationManager.IMPORTANCE_HIGH);
+        NotificationChannel ch = new NotificationChannel(CHANNEL, "یادآورهای ایشیم", NotificationManager.IMPORTANCE_HIGH);
         ch.setDescription("زنگ و اعلان یادداشت‌ها");
         ch.setSound(alarmSound(), new AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_ALARM)

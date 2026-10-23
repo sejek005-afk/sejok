@@ -397,7 +397,7 @@ V.invSettings = () => {
   const lg = logoSrc(), sp = S('stamp');
   const row = (g, t, d) => `<div class="li" onclick="invSetForm('${g}')"><div class="d"><b>${t}</b><div class="mut">${d}</div></div><span class="mut">${ic('edit')}</span></div>`;
   let h = `<div class="sec">لوگو و مهر</div><div class="card">
-    <div class="ct" style="margin-bottom:10px"><div class="imgbox">${lg ? `<img src="${lg}">` : ic('image')}</div><div style="flex:1"><b>لوگوی فاکتور</b><div class="mut">${S('logo') ? (S('logo') === 'none' ? 'بدون لوگو' : 'لوگوی شما') : 'لوگوی راوانو (پیش‌فرض)'}</div></div></div>
+    <div class="ct" style="margin-bottom:10px"><div class="imgbox">${lg ? `<img src="${lg}">` : ic('image')}</div><div style="flex:1"><b>لوگوی فاکتور</b><div class="mut">${S('logo') ? (S('logo') === 'none' ? 'بدون لوگو' : 'لوگوی شما') : 'لوگوی ایشیم (پیش‌فرض)'}</div></div></div>
     <div class="row"><button class="btn pri sm" style="flex:1" onclick="pickImage('logo')">${ic('image')} آپلود لوگو</button>${lg ? `<button class="btn sm" onclick="clearImage('logo')">حذف</button>` : ''}</div>
     <div class="ct" style="margin:16px 0 10px"><div class="imgbox">${sp ? `<img src="${sp}">` : ic('image')}</div><div style="flex:1"><b>مهر یا امضا</b><div class="mut">${sp ? 'زیر فاکتور چاپ می‌شود' : 'ندارد'}</div></div></div>
     <div class="row"><button class="btn pri sm" style="flex:1" onclick="pickImage('stamp')">${ic('image')} آپلود مهر/امضا</button>${sp ? `<button class="btn sm" onclick="clearImage('stamp')">حذف</button>` : ''}</div></div>

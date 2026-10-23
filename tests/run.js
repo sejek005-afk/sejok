@@ -45,7 +45,7 @@ test('import: cats:[null] does not brick the app', () => {
   assert.ok(!t.els.main.innerHTML.includes('خطا روبه‌رو'), 'home renders without the error screen');
   // و دوباره اجرا شدن برنامه با همین داده
   const t2 = boot({ storage: { contractor_db_v1: t.store.get('contractor_db_v1') } });
-  assert.ok(t2.els.hdr.innerHTML.includes('راوانو'));
+  assert.ok(t2.els.hdr.innerHTML.includes('ایشیم'));
 });
 
 test('import: wrong types and non-backups are rejected or cleaned', () => {
