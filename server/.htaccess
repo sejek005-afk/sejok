@@ -1,0 +1,24 @@
+# ایشیم — تنظیمات امنیتی سرور
+Options -Indexes
+DirectoryIndex index.php
+
+# فایل‌های داخلی از بیرون قابل دسترسی نیستند
+<FilesMatch "^(config\.php.*|lib\.php|.*\.sqlite.*|.*\.md|\.ht.*)$">
+    Require all denied
+</FilesMatch>
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    # همه درخواست‌ها با HTTPS
+    RewriteCond %{HTTPS} off
+    RewriteCond %{HTTP:X-Forwarded-Proto} !https
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+    # رساندن هدر Authorization به PHP (در برخی هاست‌ها حذف می‌شود)
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+</IfModule>
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set Referrer-Policy "no-referrer"
+</IfModule>

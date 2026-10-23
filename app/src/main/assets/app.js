@@ -298,6 +298,7 @@ function fieldInput(f) {
     case 'select': return `<select id="${id}" onchange="updateWhen()">${f.opts.map(o => `<option value="${esc(o[0])}" ${String(o[0]) === String(v) ? 'selected' : ''}>${esc(o[1])}</option>`).join('')}</select>`;
     case 'textarea': return `<textarea id="${id}">${esc(v)}</textarea>`;
     case 'time': return `<input id="${id}" type="time" value="${esc(v)}" dir="ltr">`;
+    case 'password': return `<input id="${id}" type="password" dir="ltr" style="text-align:left" autocomplete="off" autocapitalize="off" spellcheck="false">`;
     default: return `<input id="${id}" value="${esc(v)}" ${f.list ? `list="dl_${f.k}"` : ''} ${f.onchange ? `onchange="${f.onchange}"` : ''} ${f.ltr ? 'dir="ltr" style="text-align:left"' : ''}>${f.list ? `<datalist id="dl_${f.k}">${f.list.map(x => `<option value="${esc(x)}">`).join('')}</datalist>` : ''}`;
   }
 }
@@ -317,7 +318,7 @@ function readForm() {
     if (f.type === 'money') v = rnd(num(v));
     else if (f.type === 'num') v = num(v);
     else if (f.type === 'select' && f.numeric) v = v === '' ? null : +v;
-    else if (typeof v === 'string') v = v.trim();
+    else if (typeof v === 'string' && f.type !== 'password') v = v.trim();
     o[f.k] = v;
   }
   return o;
@@ -1010,11 +1011,12 @@ V.settings = () => {
     <div class="bar"><i style="width:${pct}%;background:${pct > 90 ? 'var(--bad)' : pct > 70 ? 'var(--yellow)' : 'var(--ok)'}"></i></div>
     <div class="mut">${mb(used)} مگابایت از حدود ${mb(LIMIT)} مگابایت</div>
     ${pct > 70 ? `<div class="mut" style="color:var(--bad);margin-top:6px">فضای برنامه رو به پر شدن است. فایل پشتیبان بگیرید؛ اگر حافظه پر شود، تغییرات جدید ذخیره نمی‌شوند.</div>` : ''}</div>`;
-  let h = storage + `<div class="card"><b>پشتیبان‌گیری</b><div class="mut" style="margin:4px 0 10px">اطلاعات فقط روی همین گوشی ذخیره می‌شود. برای جلوگیری از گم شدن اطلاعات (مثلاً هنگام عوض کردن گوشی)، هر چند وقت یک بار فایل پشتیبان بگیرید.</div>
+  const online = !!(window.syncLoggedIn && syncLoggedIn());
+  let h = (window.syncCard ? syncCard() : '') + storage + `<div class="card"><b>پشتیبان‌گیری</b><div class="mut" style="margin:4px 0 10px">${online ? 'اطلاعات روی سرور هم ذخیره می‌شود. گرفتن فایل پشتیبان هر چند وقت یک بار باز هم توصیه می‌شود.' : 'اطلاعات فقط روی همین گوشی ذخیره می‌شود. برای جلوگیری از گم شدن اطلاعات (مثلاً هنگام عوض کردن گوشی)، هر چند وقت یک بار فایل پشتیبان بگیرید.'}</div>
     <button class="btn pri wide" onclick="exportData()">${ic('out')} ذخیره فایل پشتیبان</button>
     <label class="btn dark wide">${ic('in')} بازیابی از فایل پشتیبان<input type="file" accept=".json,application/json,text/plain,*/*" style="display:none" onchange="importData(this)"></label></div>
     <div class="card"><div class="kv"><span>دسته‌ها</span><span>${faDigits(DB.cats.length)}</span></div><div class="kv"><span>پروژه‌ها</span><span>${faDigits(n)}</span></div><div class="kv"><span>شاگردها</span><span>${faDigits(w)}</span></div><div class="kv"><span>نصاب‌ها</span><span>${faDigits(DB.installers.length)}</span></div><div class="kv"><span>پیمانکاران</span><span>${faDigits(DB.contractors.length)}</span></div></div>
-    <div class="card"><button class="btn danger wide" style="margin:0" onclick="askConfirm('همه اطلاعات برنامه پاک شود؟ این کار قابل بازگشت نیست.',()=>askConfirm('واقعاً مطمئن هستید؟',()=>{DB=fix({});save();tab('home')}))">پاک کردن همه اطلاعات</button></div>
+    <div class="card">${online ? '<div class="mut">برای پاک کردن اطلاعات این گوشی، اول از حساب خارج شوید. (پاک کردن در حالت ورود، اطلاعات را از سرور و گوشی همه کاربران هم پاک می‌کرد.)</div>' : `<button class="btn danger wide" style="margin:0" onclick="askConfirm('همه اطلاعات برنامه پاک شود؟ این کار قابل بازگشت نیست.',()=>askConfirm('واقعاً مطمئن هستید؟',()=>{DB=fix({});save();tab('home')}))">پاک کردن همه اطلاعات</button>`}</div>
     <div style="text-align:center;margin-top:18px"><img src="logo.png" alt="ایشیم" style="width:150px;opacity:.9"><div class="mut">${appVersion() ? 'نسخه ' + faDigits(appVersion()) : ''}</div></div>`;
   return { title: 'تنظیمات', html: h };
 };
@@ -1056,7 +1058,8 @@ function importData(input) {
     try { r = parseBackup(rd.result); } catch (e) { toast('فایل پشتیبان معتبر نیست'); return; }
     const d = r.db;
     const msg = `اطلاعات فعلی با فایل پشتیبان جایگزین شود؟ (${faDigits(d.projects.length)} پروژه، ${faDigits(d.workers.length)} شاگرد، ${faDigits(d.invoices.length)} فاکتور${r.dropped ? `، ${faDigits(r.dropped)} مورد نامعتبر حذف می‌شود` : ''})`;
-    askConfirm(msg, () => applyBackup(r));
+    const shared = window.syncLoggedIn && syncLoggedIn() ? ' توجه: چون وارد حساب هستید، این جایگزینی روی سرور و گوشی همه کاربران هم اعمال می‌شود.' : '';
+    askConfirm(msg + shared, () => applyBackup(r));
   };
   rd.readAsText(f);
   input.value = '';
@@ -1095,7 +1098,7 @@ function renderError(e) {
 
 // ===================== رندر =====================
 const NAV = [['home', 'site', 'پروژه‌ها'], ['workers', 'helmet', 'شاگردها'], ['installers', 'ruler', 'نصاب‌ها'], ['contractors', 'wallet', 'پیمانکاران'], ['invoices', 'receipt', 'فاکتور'], ['notes', 'bell', 'یادداشت'], ['chart', 'chart', 'نمودار']];
-const ROOT = { home: 'home', cat: 'home', project: 'home', settings: 'home', workers: 'workers', worker: 'workers', attendance: 'workers', installers: 'installers', installer: 'installers', contractors: 'contractors', contractor: 'contractors', chart: 'chart', invoices: 'invoices', invoice: 'invoices', invPreview: 'invoices', invSettings: 'invoices', notes: 'notes', stmt: 'home', stmtPreview: 'home' };
+const ROOT = { home: 'home', cat: 'home', project: 'home', settings: 'home', workers: 'workers', worker: 'workers', attendance: 'workers', installers: 'installers', installer: 'installers', contractors: 'contractors', contractor: 'contractors', chart: 'chart', invoices: 'invoices', invoice: 'invoices', invPreview: 'invoices', invSettings: 'invoices', notes: 'notes', stmt: 'home', stmtPreview: 'home', users: 'home' };
 function navBadge(t) { const f = window.NAV_BADGE && window.NAV_BADGE[t]; const n = f ? f() : 0; return n ? `<i class="nb">${faDigits(n > 9 ? '9+' : n)}</i>` : ''; }
 window.openTab = n => { closeModal(); tab(n); };
 function render() {

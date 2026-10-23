@@ -8,3 +8,4 @@ local.properties
 # signing keys must never be committed
 *.keystore
 *.jks
+server/config.php

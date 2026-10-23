@@ -395,6 +395,9 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public String appVersion() { return BuildConfig.VERSION_NAME; }
 
+        @JavascriptInterface
+        public String deviceName() { return (android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL).trim(); }
+
         // انتقال یک‌باره اطلاعات از مبدأ قدیمی file:// به مبدأ جدید
         @JavascriptInterface
         public void saveMigration(String json) {
