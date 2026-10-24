@@ -29,15 +29,28 @@ public final class Alarms {
 
     static int immutable() { return Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0; }
 
-    private static PendingIntent firePi(Context c, int id, JSONObject o, int extraFlags) {
-        Intent i = new Intent(c, AlarmReceiver.class).setAction(ACTION_FIRE);
+    // شناسه‌ها از گوشی‌های مختلف می‌توانند بزرگ‌تر از int باشند (deviceId × ۱۰۹)؛
+    // یکتایی PendingIntent با آدرس data تضمین می‌شود و requestCode فقط خلاصه‌ای از شناسه است.
+    static int code(long id) { return (int) (id ^ (id >>> 32)); }
+    static Uri uri(String kind, long id) { return Uri.parse("eshim://alarm/" + kind + "/" + id); }
+    static String notifTag(long id) { return "n" + id; }
+
+    private static PendingIntent firePi(Context c, long id, JSONObject o, int extraFlags) {
+        Intent i = new Intent(c, AlarmReceiver.class).setAction(ACTION_FIRE).setData(uri("fire", id));
         i.putExtra("id", id);
         if (o != null) {
             i.putExtra("title", o.optString("title"));
             i.putExtra("text", o.optString("text"));
             i.putExtra("tag", o.optString("tag", "normal"));
         }
-        return PendingIntent.getBroadcast(c, id, i, extraFlags | immutable());
+        return PendingIntent.getBroadcast(c, code(id), i, extraFlags | immutable());
+    }
+
+    /** زنگ‌هایی که نسخه‌های قبلی (بدون آدرس data) تنظیم کرده بودند */
+    private static PendingIntent legacyFirePi(Context c, long id) {
+        if (id > Integer.MAX_VALUE || id < 0) return null;
+        Intent i = new Intent(c, AlarmReceiver.class).setAction(ACTION_FIRE);
+        return PendingIntent.getBroadcast(c, (int) id, i, PendingIntent.FLAG_NO_CREATE | immutable());
     }
 
     /** لیست کامل زنگ‌ها را از برنامه می‌گیرد؛ قبلی‌ها لغو و جدیدها تنظیم می‌شوند */
@@ -47,9 +60,11 @@ public final class Alarms {
         try {
             JSONArray old = new JSONArray(sp.getString("list", "[]"));
             for (int k = 0; k < old.length(); k++) {
-                int id = old.getJSONObject(k).getInt("id");
+                long id = old.getJSONObject(k).getLong("id");
                 PendingIntent pi = firePi(c, id, null, PendingIntent.FLAG_NO_CREATE);
                 if (pi != null) { am.cancel(pi); pi.cancel(); }
+                PendingIntent lp = legacyFirePi(c, id);
+                if (lp != null) { am.cancel(lp); lp.cancel(); }
             }
         } catch (Exception ignored) {}
         sp.edit().putString("list", json == null ? "[]" : json).apply();
@@ -57,13 +72,13 @@ public final class Alarms {
     }
 
     /** وقتی زنگی به صدا درآمد علامت می‌خورد تا بعد از ری‌استارت دوباره «از دست رفته» حساب نشود */
-    static synchronized void markFired(Context c, int id) {
+    static synchronized void markFired(Context c, long id) {
         SharedPreferences sp = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         try {
             JSONArray arr = new JSONArray(sp.getString("list", "[]"));
             for (int k = 0; k < arr.length(); k++) {
                 JSONObject o = arr.getJSONObject(k);
-                if (o.optInt("id") == id) o.put("f", true);
+                if (o.optLong("id") == id) o.put("f", true);
             }
             sp.edit().putString("list", arr.toString()).apply();
         } catch (Exception ignored) {}
@@ -126,13 +141,13 @@ public final class Alarms {
 
     private static void schedule(Context c, JSONObject o) throws Exception {
         AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
-        int id = o.getInt("id");
+        long id = o.getLong("id");
         long t = o.getLong("t");
         PendingIntent pi = firePi(c, id, o, PendingIntent.FLAG_UPDATE_CURRENT);
         boolean exactOk = Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms();
         if (exactOk) {
-            Intent show = new Intent(c, MainActivity.class).putExtra("openNotes", true);
-            PendingIntent showPi = PendingIntent.getActivity(c, 100000 + id, show, PendingIntent.FLAG_UPDATE_CURRENT | immutable());
+            Intent show = new Intent(c, MainActivity.class).putExtra("openNotes", true).setData(uri("show", id));
+            PendingIntent showPi = PendingIntent.getActivity(c, code(id), show, PendingIntent.FLAG_UPDATE_CURRENT | immutable());
             am.setAlarmClock(new AlarmManager.AlarmClockInfo(t, showPi), pi);
         } else if (Build.VERSION.SDK_INT >= 23) {
             am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, t, pi);
@@ -166,17 +181,17 @@ public final class Alarms {
     }
 
     @SuppressWarnings("deprecation")
-    static void show(Context c, int id, String title, String text, String tag) {
+    static void show(Context c, long id, String title, String text, String tag) {
         ensureChannel(c);
         NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
         String prefix = "urgent".equals(tag) ? "🔴 اضطراری: " : "important".equals(tag) ? "🟡 مهم: " : "";
         int color = "urgent".equals(tag) ? 0xFFC8452F : "important".equals(tag) ? 0xFFF5B800 : 0xFF20262D;
 
-        Intent open = new Intent(c, MainActivity.class).putExtra("openNotes", true)
+        Intent open = new Intent(c, MainActivity.class).putExtra("openNotes", true).setData(uri("open", id))
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        PendingIntent openPi = PendingIntent.getActivity(c, 200000 + id, open, PendingIntent.FLAG_UPDATE_CURRENT | immutable());
-        Intent dis = new Intent(c, AlarmReceiver.class).setAction(ACTION_DISMISS).putExtra("id", id);
-        PendingIntent disPi = PendingIntent.getBroadcast(c, 300000 + id, dis, PendingIntent.FLAG_UPDATE_CURRENT | immutable());
+        PendingIntent openPi = PendingIntent.getActivity(c, code(id), open, PendingIntent.FLAG_UPDATE_CURRENT | immutable());
+        Intent dis = new Intent(c, AlarmReceiver.class).setAction(ACTION_DISMISS).setData(uri("dismiss", id)).putExtra("id", id);
+        PendingIntent disPi = PendingIntent.getBroadcast(c, code(id), dis, PendingIntent.FLAG_UPDATE_CURRENT | immutable());
 
         Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(c, CHANNEL) : new Notification.Builder(c);
         b.setSmallIcon(R.drawable.ic_stat_note)
@@ -199,6 +214,6 @@ public final class Alarms {
         }
         Notification n = b.build();
         n.flags |= Notification.FLAG_INSISTENT; // تکرار صدای زنگ تا وقتی کاربر اعلان را لمس یا رد کند
-        nm.notify(id, n);
+        nm.notify(notifTag(id), 1, n);
     }
 }

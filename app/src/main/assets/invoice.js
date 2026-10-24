@@ -77,13 +77,25 @@ function customers() {
   return m;
 }
 
+// شماره فاکتور بعدی: از تنظیمات، اما هرگز کمتر از بزرگ‌ترین شماره موجود
+// (وقتی چند نفر روی یک حساب کار می‌کنند، فاکتورهای دیگران هم بعد از همگام‌سازی در نظر گرفته می‌شوند)
+function peekInvNo() {
+  let max = 0;
+  for (const i of DB.invoices) if (+i.no > max) max = +i.no;
+  return Math.max(+S('nextNo') || 1, max + 1);
+}
+function takeInvNo() {
+  const no = peekInvNo();
+  DB.inv.nextNo = no + 1;
+  return no;
+}
+
 // ---------- فرم‌ها ----------
 function newInvoice(kind, projectId) {
-  const no = +S('nextNo') || 1;
+  const no = takeInvNo();
   const inv = { id: nid(), no, kind: kind || 'inv', title: S('defTitle') || '', date: todayJ(), due: '', customer: { name: '', address: '', phone: '' }, projectId: null, items: [], discount: 0, taxOn: false, taxRate: +S('taxRate') || 0, pays: [], note: '' };
   if (projectId && proj(projectId)) { inv.projectId = +projectId; inv.customer.address = proj(projectId).address || ''; }
   DB.invoices.push(inv);
-  DB.inv.nextNo = no + 1;
   save();
   go('invoice', { id: inv.id });
   invHeadForm(inv.id);
@@ -220,7 +232,7 @@ function noteForm(id) {
 function dupInvoice(id, kind) {
   const src = getInv(id);
   const c = JSON.parse(JSON.stringify(src));
-  c.id = nid(); c.no = +S('nextNo') || 1; DB.inv.nextNo = c.no + 1;
+  c.id = nid(); c.no = takeInvNo();
   c.date = todayJ(); c.pays = [];
   if (kind) c.kind = kind;
   c.items.forEach(it => it.id = nid());
@@ -404,7 +416,7 @@ V.invSettings = () => {
     <div class="sec">تنظیمات</div><div class="list">
     ${row('biz', 'اطلاعات فروشنده', esc(S('biz') || 'نام، شعار، تلفن و آدرس'))}
     ${row('pay', 'اطلاعات پرداخت', S('card') ? esc(faDigits(S('card'))) : 'شماره کارت، شبا و بانک')}
-    ${row('opt', 'تنظیمات فاکتور', `واحد پول: ${ccy()} · مالیات پیش‌فرض ${faNum(S('taxRate'))}٪ · شماره بعدی ${faDigits(S('nextNo'))}`)}
+    ${row('opt', 'تنظیمات فاکتور', `واحد پول: ${ccy()} · مالیات پیش‌فرض ${faNum(S('taxRate'))}٪ · شماره بعدی ${faDigits(peekInvNo())}`)}
     ${row('text', 'متن‌های ثابت فاکتور', esc(S('footer') || 'شرایط و متن پایانی'))}
     </div>`;
   return { title: 'تنظیمات فاکتور', html: h };

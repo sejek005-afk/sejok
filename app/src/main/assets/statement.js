@@ -98,11 +98,11 @@ function stmtToInvoice(id) {
   const s = getStmt(id); const c = stmtCalc(s); const p = proj(s.projectId);
   if (!c.amt) { toast('مبلغ این دوره صفر است'); return; }
   const lastInv = DB.invoices.filter(i => i.projectId === s.projectId && i.customer && i.customer.name).slice(-1)[0];
-  const no = +S('nextNo') || 1;
+  const no = takeInvNo();
   const items = s.items.filter(it => it.qty).map(it => ({ id: nid(), title: it.title, desc: it.desc || '', qty: it.qty, unit: it.unit, price: it.price, disc: 0 }));
   if (c.ret) items.push({ id: nid(), title: `کسر حسن انجام کار ${faNum(s.ret)}٪`, desc: '', qty: 1, unit: 'مقطوع', price: -c.ret, disc: 0 });
   const inv = { id: nid(), no, kind: 'inv', title: `صورت‌وضعیت شماره ${faDigits(s.no)}`, date: todayJ(), due: '', customer: lastInv ? JSON.parse(JSON.stringify(lastInv.customer)) : { name: '', address: (p && p.address) || '', phone: '' }, projectId: s.projectId, items, discount: 0, taxOn: false, taxRate: +S('taxRate') || 0, pays: [], note: `بابت صورت‌وضعیت شماره ${faDigits(s.no)} — دوره ${faDigits(s.from)} تا ${faDigits(s.to)}`, stmtId: s.id };
-  DB.invoices.push(inv); DB.inv.nextNo = no + 1; s.invoiceId = inv.id; save();
+  DB.invoices.push(inv); s.invoiceId = inv.id; save();
   go('invoice', { id: inv.id }); toast('فاکتور از روی صورت‌وضعیت ساخته شد');
 }
 

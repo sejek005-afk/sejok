@@ -25,13 +25,10 @@ window.syncLoggedIn = syncLoggedIn;
 
 // ---------- اثر انگشت و نسخه قابل ارسال هر رکورد ----------
 function syHash(s) {
-  let a = 0x811c9dc5, b = 0x9747b28c;
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i);
-    a = Math.imul(a ^ c, 16777619);
-    b = Math.imul(b ^ c, 0x5bd1e995); b ^= b >>> 15;
-  }
-  return (a >>> 0).toString(36) + (b >>> 0).toString(36) + s.length.toString(36);
+  // FNV-1a ۳۲ بیتی؛ فقط برای تشخیص تغییر رکورد
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  return (h >>> 0).toString(36);
 }
 // fillFrom شاگرد وضعیت داخلی هر گوشی برای حضور خودکار است و همگام نمی‌شود
 function sySer(c, r) {
@@ -44,20 +41,46 @@ function syInvSer() {
 }
 function syAssetSer(k) { const v = window.getAsset ? getAsset(k) : ''; return v ? JSON.stringify({ v }) : null; }
 // همه رکوردهای محلی: Map از «مجموعه|شناسه» به { c, id, s }
-function syCurrent() {
-  const m = new Map();
-  for (const c of SYNC_COLLS) for (const r of DB[c]) m.set(c + '|' + r.id, { c, id: String(r.id), s: sySer(c, r) });
-  for (const k in DB.att) m.set('att|' + k, { c: 'att', id: k, s: JSON.stringify(DB.att[k]) });
-  const inv = syInvSer(); if (inv) m.set('settings|inv', { c: 'settings', id: 'inv', s: inv });
-  for (const k of ['logo', 'stamp']) { const s = syAssetSer(k); if (s) m.set('asset|' + k, { c: 'asset', id: k, s }); }
-  return m;
+function* syEntries() {
+  for (const c of SYNC_COLLS) for (const r of DB[c]) yield [c + '|' + r.id, { c, id: String(r.id), s: sySer(c, r) }];
+  for (const k in DB.att) yield ['att|' + k, { c: 'att', id: k, s: JSON.stringify(DB.att[k]) }];
+  const inv = syInvSer(); if (inv) yield ['settings|inv', { c: 'settings', id: 'inv', s: inv }];
+  for (const k of ['logo', 'stamp']) { const s = syAssetSer(k); if (s) yield ['asset|' + k, { c: 'asset', id: k, s }]; }
+}
+function syCurrent() { return new Map(syEntries()); }
+// کش متن و اثر انگشت هر رکورد در حافظه: اگر متن رکورد عوض نشده باشد، دوباره hash نمی‌شود
+const SY_CACHE = new Map();
+function syHashOf(k, str) {
+  const c = SY_CACHE.get(k);
+  if (c && c[0] === str) return c[1];
+  const h = syHash(str);
+  SY_CACHE.set(k, [str, h]);
+  return h;
+}
+const syYield = () => new Promise(r => setTimeout(r, 0));
+// فهرست تغییرات ارسال‌نشده؛ کار در تکه‌های کوچک انجام می‌شود تا برنامه هنگام همگام‌سازی کند نشود
+async function syPendingAsync() {
+  const cur = new Set();
+  const out = [];
+  let n = 0;
+  for (const [k, x] of syEntries()) {
+    cur.add(k);
+    if (SY.snap[k] !== syHashOf(k, x.s)) out.push({ k, c: x.c, id: x.id, s: x.s });
+    if (++n % 1500 === 0) await syYield();
+  }
+  for (const k in SY.snap) if (!cur.has(k)) { const i = k.indexOf('|'); out.push({ k, c: k.slice(0, i), id: k.slice(i + 1), s: null }); SY_CACHE.delete(k); }
+  SY_PEND = out.length;
+  return out;
 }
 function syPending(cur) {
   const out = [];
-  for (const [k, x] of cur) if (SY.snap[k] !== syHash(x.s)) out.push({ k, c: x.c, id: x.id, s: x.s });
+  for (const [k, x] of cur) if (SY.snap[k] !== syHashOf(k, x.s)) out.push({ k, c: x.c, id: x.id, s: x.s });
   for (const k in SY.snap) if (!cur.has(k)) { const i = k.indexOf('|'); out.push({ k, c: k.slice(0, i), id: k.slice(i + 1), s: null }); }
   return out;
 }
+let SY_PEND = 0;
+// فقط اگر از آخرین بررسی چیزی ذخیره شده باشد، تغییرات محلی دوباره بررسی می‌شوند
+let SY_DIRTY = true;
 function syHasLocalData() {
   return SYNC_COLLS.some(c => DB[c].length) || Object.keys(DB.att).length > 0;
 }
@@ -192,14 +215,15 @@ async function syncNow(manual) {
     }
     if (SY.fresh) { SY.fresh = false; sySave(); }
     // ۲) ارسال تغییرات این گوشی (در بسته‌های کوچک)
-    const pend = syPending(syCurrent());
+    const pend = SY_DIRTY ? (SY_DIRTY = false, await syPendingAsync()) : [];
     for (let i = 0; i < pend.length;) {
       const chunk = []; let bytes = 0;
       while (i < pend.length && chunk.length < 300 && (bytes < 2000000 || !chunk.length)) { const x = pend[i++]; chunk.push(x); bytes += x.s ? x.s.length : 20; }
       const body = syBody('[' + chunk.map(x => '{"c":' + JSON.stringify(x.c) + ',"id":' + JSON.stringify(x.id) + ',"d":' + (x.s == null ? 'null' : x.s) + '}').join(',') + ']');
       const r = await syApi('sync', body);
       if (stale()) return false;
-      for (const x of chunk) { if (x.s == null) delete SY.snap[x.k]; else SY.snap[x.k] = syHash(x.s); }
+      for (const x of chunk) { if (x.s == null) delete SY.snap[x.k]; else SY.snap[x.k] = syHashOf(x.k, x.s); }
+      SY_PEND = Math.max(0, SY_PEND - chunk.length);
       if (syApplyPage(r.changes)) { anyChange = true; syAfterApply(); }
       SY.rev = r.rev; sySave();
       more = !!r.more;
@@ -215,6 +239,7 @@ async function syncNow(manual) {
     if (manual) toast('همگام‌سازی انجام شد');
     return true;
   } catch (e) {
+    SY_DIRTY = true;
     if (e.code === 'bad_token' || e.code === 'no_token' || e.code === 'disabled') {
       syErr = '';
       toast(e.message);
@@ -246,7 +271,8 @@ function sySchedule(ms) {
   syTimer = setTimeout(() => syncNow(false), ms);
 }
 const _saveSync = save;
-save = function () { _saveSync(); if (!syApplying) sySchedule(3000); };
+save = function () { _saveSync(); if (!syApplying) { SY_DIRTY = true; sySchedule(3000); } };
+if (window.setAsset) { const _setAssetSync = setAsset; setAsset = function (k, v) { SY_DIRTY = true; if (!syApplying) sySchedule(3000); return _setAssetSync(k, v); }; }
 
 function syWipeLocal() {
   DB = fix({}); DB_CORRUPT = null;
@@ -296,14 +322,14 @@ async function syEnterWs(id, checkPending) {
   if (checkPending) {
     if (syBusy) { toast('کمی صبر کنید؛ همگام‌سازی در جریان است'); return; }
     await syncNow(false);
-    const pend = syPending(syCurrent()).length;
+    const pend = (await syPendingAsync()).length;
     if (pend) { toast(`${faDigits(pend)} تغییر هنوز به سرور نرسیده؛ اول اینترنت را وصل کنید و «همگام‌سازی الان» را بزنید`); return; }
     try { await syApi('use_ws', { ws: id }); } catch (e) { toast(e.message); return; }
   } else {
     syApi('use_ws', { ws: id }).catch(() => { });
   }
   syWipeLocal();
-  SY.ws = id; SY.rev = 0; SY.snap = {}; SY.fresh = true; SY.last = 0;
+  SY.ws = id; SY.rev = 0; SY.snap = {}; SY.fresh = true; SY.last = 0; SY_DIRTY = true; SY_CACHE.clear();
   sySave(); SY_MEMBERS = null;
   stack = [{ name: 'home' }]; closeModal(); render();
   toast('در حال دریافت اطلاعات حساب…');
@@ -414,6 +440,7 @@ function syStartSession(url, r) {
   const start = () => {
     SY = { url, token: r.token, deviceId: r.deviceId, user: r.user, ws: r.ws, ownWs: r.ownWs, wsList: r.workspaces,
       seenWs: r.workspaces.map(w => w.id), rev: 0, snap: {}, fresh: true, lastUser: r.user.username };
+    SY_DIRTY = true; SY_CACHE.clear();
     sySave(); closeModal(); stack = [{ name: 'home' }]; render();
     toast(r.serverHasData ? 'وارد شدید؛ در حال دریافت اطلاعات…' : 'خوش آمدید!');
     syncNow(false);
@@ -441,7 +468,7 @@ function syStartSession(url, r) {
 async function syncLogout() {
   if (syBusy) { toast('کمی صبر کنید؛ همگام‌سازی در جریان است'); return; }
   await syncNow(false);
-  const pend = syPending(syCurrent()).length;
+  const pend = (await syPendingAsync()).length;
   const msg = pend
     ? `${faDigits(pend)} تغییر هنوز به سرور نرسیده (اینترنت وصل نیست). اگر خارج شوید این تغییرات فقط در فایل پشتیبانی که الان ذخیره می‌شود می‌ماند. خارج می‌شوید؟`
     : 'از حساب خارج می‌شوید؟ اطلاعات روی سرور می‌ماند و با ورود دوباره برمی‌گردد.';
@@ -485,7 +512,7 @@ function syncCard() {
   const w = syCurWs();
   const isOwner = w ? w.role === 'owner' : true;
   if (SY_MEMBERS_WS !== SY.ws) { SY_MEMBERS = null; SY_MEMBERS_WS = SY.ws; syLoadMembers(); }
-  let pend = 0; try { pend = syPending(syCurrent()).length; } catch (e) { }
+  const pend = SY_PEND;
   let h = `<div class="card"><div class="ct"><b>حساب کاربری</b><span class="badge ${syErr ? 'bad' : 'ok'}">${syBusy ? 'در حال همگام‌سازی' : syErr ? 'خطا' : 'متصل'}</span></div>
     <div class="kv"><span>کاربر</span><span>${esc(u.name || '')}</span></div>
     <div class="kv"><span>شماره / نام کاربری</span><span dir="ltr">${esc(u.username || '')}</span></div>
