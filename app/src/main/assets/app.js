@@ -1105,10 +1105,11 @@ function render() {
   try { renderView(); } catch (e) { renderError(e); }
 }
 function renderView() {
-  const r = DB_CORRUPT ? { name: 'corrupt' } : cur();
+  const gate = !DB_CORRUPT && window.authGate ? authGate() : null;
+  const r = DB_CORRUPT ? { name: 'corrupt' } : gate ? { name: gate } : cur();
   const v = V[r.name](r);
   const rr = cur();
-  const canBack = stack.length > 1;
+  const canBack = stack.length > 1 && !gate;
   document.getElementById('hdr').innerHTML = `${canBack ? `<button onclick="back()" aria-label="بازگشت">${ic('back')}</button>` : ''}<h1>${v.logo ? '<img class="hlogo" src="logo-mark.png" alt="">' : ''}${esc(v.title)}</h1>
     ${v.edit ? `<button onclick="${v.edit}" aria-label="ویرایش">${ic('edit')}</button>` : ''}${v.settings ? `<button onclick="go('settings')" aria-label="تنظیمات">${ic('gear')}</button>` : ''}`;
   document.getElementById('main').innerHTML = v.html;
@@ -1116,7 +1117,10 @@ function renderView() {
   fab.innerHTML = ic('plus');
   if (v.fab) { fab.style.display = ''; fab.setAttribute('onclick', v.fab); } else fab.style.display = 'none';
   const root = DB_CORRUPT ? '' : ROOT[(stack[0] || rr).name];
-  document.getElementById('nav').innerHTML = NAV.map(n => `<button class="${root === n[0] ? 'on' : ''}" onclick="tab('${n[0]}')">${ic(n[1])}${n[2]}${navBadge(n[0])}</button>`).join('');
+  const navEl = document.getElementById('nav');
+  navEl.style.display = gate ? 'none' : '';
+  if (gate) { navEl.innerHTML = ''; return; }
+  navEl.innerHTML = NAV.map(n => `<button class="${root === n[0] ? 'on' : ''}" onclick="tab('${n[0]}')">${ic(n[1])}${n[2]}${navBadge(n[0])}</button>`).join('');
 }
 
 syncAtt();

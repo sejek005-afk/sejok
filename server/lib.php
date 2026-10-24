@@ -2,7 +2,8 @@
 // ایشیم — کتابخانه مشترک سرور
 declare(strict_types=1);
 
-const API_VERSION = 1;
+const API_VERSION = 2;
+const SCHEMA_VERSION = 2;
 const TOKEN_DAYS = 180;
 const PAGE_LIMIT = 2000;
 const MAX_REQUEST_BYTES = 8 * 1024 * 1024;
@@ -63,7 +64,6 @@ function create_schema(PDO $pdo): void {
         "CREATE TABLE IF NOT EXISTS rw_devices (id $auto, user_id INT NOT NULL, label VARCHAR(100) NOT NULL DEFAULT '', created BIGINT NOT NULL)$engine",
         "CREATE TABLE IF NOT EXISTS rw_tokens (token_hash CHAR(64) NOT NULL PRIMARY KEY, user_id INT NOT NULL, device_id INT NOT NULL, created BIGINT NOT NULL, last_seen BIGINT NOT NULL, expires BIGINT NOT NULL)$engine",
         "CREATE TABLE IF NOT EXISTS rw_records (coll VARCHAR(20) NOT NULL, rid VARCHAR(40) NOT NULL, data $text, rev BIGINT NOT NULL, deleted TINYINT NOT NULL DEFAULT 0, updated_by INT NOT NULL DEFAULT 0, updated_dev INT NOT NULL DEFAULT 0, updated_at BIGINT NOT NULL, PRIMARY KEY (coll, rid))$engine",
-        "CREATE INDEX " . ($sqlite ? 'IF NOT EXISTS ' : '') . "rw_records_rev ON rw_records (rev)",
         "CREATE TABLE IF NOT EXISTS rw_meta (k VARCHAR(40) NOT NULL PRIMARY KEY, v VARCHAR(255) NOT NULL)$engine",
         "CREATE TABLE IF NOT EXISTS rw_attempts (id $auto, ip VARCHAR(45) NOT NULL, username VARCHAR(64) NOT NULL, ts BIGINT NOT NULL)$engine",
     ];
@@ -74,7 +74,112 @@ function create_schema(PDO $pdo): void {
         }
     }
     $pdo->exec("INSERT " . ($sqlite ? 'OR IGNORE' : 'IGNORE') . " INTO rw_meta (k, v) VALUES ('rev', '0')");
+    migrate_schema($pdo);
 }
+
+function meta_get(PDO $pdo, string $k): string {
+    $st = $pdo->prepare('SELECT v FROM rw_meta WHERE k = ?');
+    $st->execute([$k]);
+    $v = $st->fetchColumn();
+    return $v === false ? '' : (string) $v;
+}
+function meta_set(PDO $pdo, string $k, string $v): void {
+    $pdo->prepare('DELETE FROM rw_meta WHERE k = ?')->execute([$k]);
+    $pdo->prepare('INSERT INTO rw_meta (k, v) VALUES (?, ?)')->execute([$k, $v]);
+}
+function column_exists(PDO $pdo, string $table, string $col): bool {
+    try { $pdo->query("SELECT $col FROM $table LIMIT 1"); return true; } catch (PDOException $e) { return false; }
+}
+
+// نسخه ۲: هر کاربر «حساب» (workspace) جداگانه دارد و می‌تواند آن را با کاربران دیگر به اشتراک بگذارد
+function migrate_schema(PDO $pdo): void {
+    if ((int) meta_get($pdo, 'schema') >= SCHEMA_VERSION) return;
+    $sqlite = is_sqlite($pdo);
+    if ($sqlite) $pdo->exec('BEGIN IMMEDIATE');
+    else $pdo->query("SELECT GET_LOCK('eshim_migrate', 30)");
+    try {
+        if ((int) meta_get($pdo, 'schema') >= SCHEMA_VERSION) return;
+        $auto = $sqlite ? 'INTEGER PRIMARY KEY AUTOINCREMENT' : 'INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY';
+        $engine = $sqlite ? '' : ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci';
+        $text = $sqlite ? 'TEXT' : 'MEDIUMTEXT';
+        $pdo->exec("CREATE TABLE IF NOT EXISTS rw_workspaces (id $auto, owner_id INT NOT NULL, name VARCHAR(100) NOT NULL DEFAULT '', created BIGINT NOT NULL)$engine");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS rw_members (ws_id INT NOT NULL, user_id INT NOT NULL, role VARCHAR(10) NOT NULL DEFAULT 'member', created BIGINT NOT NULL, PRIMARY KEY (ws_id, user_id))$engine");
+        if (!column_exists($pdo, 'rw_users', 'last_ws')) $pdo->exec('ALTER TABLE rw_users ADD COLUMN last_ws INT NOT NULL DEFAULT 0');
+        if (!column_exists($pdo, 'rw_records', 'ws_id')) {
+            $pdo->exec("CREATE TABLE rw_records2 (ws_id INT NOT NULL, coll VARCHAR(20) NOT NULL, rid VARCHAR(40) NOT NULL, data $text, rev BIGINT NOT NULL, deleted TINYINT NOT NULL DEFAULT 0, updated_by INT NOT NULL DEFAULT 0, updated_dev INT NOT NULL DEFAULT 0, updated_at BIGINT NOT NULL, PRIMARY KEY (ws_id, coll, rid))$engine");
+            $hasRows = (int) $pdo->query('SELECT COUNT(*) FROM rw_records')->fetchColumn() > 0;
+            $users = $pdo->query("SELECT id, role FROM rw_users ORDER BY (role = 'admin') DESC, id")->fetchAll();
+            if ($users) {
+                // اطلاعات مشترک قبلی در حساب مدیر قرار می‌گیرد و همه کاربران قبلی عضو آن می‌شوند
+                $now = now_ms();
+                $owner = (int) $users[0]['id'];
+                $pdo->prepare('INSERT INTO rw_workspaces (owner_id, name, created) VALUES (?, ?, ?)')->execute([$owner, '', $now]);
+                $ws = (int) $pdo->lastInsertId();
+                foreach ($users as $u) {
+                    $pdo->prepare('INSERT INTO rw_members (ws_id, user_id, role, created) VALUES (?, ?, ?, ?)')
+                        ->execute([$ws, $u['id'], (int) $u['id'] === $owner ? 'owner' : 'member', $now]);
+                }
+                $pdo->prepare('UPDATE rw_users SET last_ws = ?')->execute([$ws]);
+                if ($hasRows) $pdo->prepare('INSERT INTO rw_records2 (ws_id, coll, rid, data, rev, deleted, updated_by, updated_dev, updated_at) SELECT ?, coll, rid, data, rev, deleted, updated_by, updated_dev, updated_at FROM rw_records')->execute([$ws]);
+            }
+            $pdo->exec('DROP TABLE rw_records');
+            $pdo->exec('ALTER TABLE rw_records2 RENAME TO rw_records');
+            $pdo->exec('CREATE INDEX rw_records_wsrev ON rw_records (ws_id, rev)');
+        }
+        meta_set($pdo, 'schema', (string) SCHEMA_VERSION);
+    } finally {
+        if ($sqlite) { try { $pdo->exec('COMMIT'); } catch (PDOException $e) { } }
+        else $pdo->query("SELECT RELEASE_LOCK('eshim_migrate')");
+    }
+}
+
+// ---------- حساب‌ها (workspace) ----------
+function own_ws(PDO $pdo, array $u): int {
+    $st = $pdo->prepare('SELECT id FROM rw_workspaces WHERE owner_id = ? ORDER BY id LIMIT 1');
+    $st->execute([$u['id']]);
+    $id = (int) $st->fetchColumn();
+    if ($id) return $id;
+    $now = now_ms();
+    $pdo->prepare('INSERT INTO rw_workspaces (owner_id, name, created) VALUES (?, ?, ?)')->execute([$u['id'], '', $now]);
+    $id = (int) $pdo->lastInsertId();
+    $pdo->prepare('INSERT INTO rw_members (ws_id, user_id, role, created) VALUES (?, ?, ?, ?)')->execute([$id, $u['id'], 'owner', $now]);
+    return $id;
+}
+function user_workspaces(PDO $pdo, int $userId): array {
+    $st = $pdo->prepare('SELECT w.id, w.owner_id, m.role, u.username AS owner_username, u.name AS owner_name FROM rw_members m JOIN rw_workspaces w ON w.id = m.ws_id JOIN rw_users u ON u.id = w.owner_id WHERE m.user_id = ? ORDER BY (m.role = \'owner\') DESC, w.id');
+    $st->execute([$userId]);
+    $out = [];
+    foreach ($st as $r) {
+        $out[] = ['id' => (int) $r['id'], 'role' => $r['role'], 'owner' => ['id' => (int) $r['owner_id'], 'username' => $r['owner_username'], 'name' => $r['owner_name']]];
+    }
+    return $out;
+}
+function member_role(PDO $pdo, int $ws, int $userId): string {
+    $st = $pdo->prepare('SELECT role FROM rw_members WHERE ws_id = ? AND user_id = ?');
+    $st->execute([$ws, $userId]);
+    $r = $st->fetchColumn();
+    return $r === false ? '' : (string) $r;
+}
+function require_member(PDO $pdo, int $ws, array $u): string {
+    $role = $ws > 0 ? member_role($pdo, $ws, $u['id']) : '';
+    if ($role === '') fail(403, 'not_member', 'دسترسی شما به این حساب برداشته شده است.');
+    return $role;
+}
+function ws_has_data(PDO $pdo, int $ws): bool {
+    $st = $pdo->prepare('SELECT COUNT(*) FROM rw_records WHERE ws_id = ? AND deleted = 0');
+    $st->execute([$ws]);
+    return (int) $st->fetchColumn() > 0;
+}
+// شماره موبایل: ارقام فارسی/عربی به انگلیسی، +98 و 0098 به 0
+function norm_phone(string $s): string {
+    $s = strtr($s, ['۰' => '0', '۱' => '1', '۲' => '2', '۳' => '3', '۴' => '4', '۵' => '5', '۶' => '6', '۷' => '7', '۸' => '8', '۹' => '9',
+        '٠' => '0', '١' => '1', '٢' => '2', '٣' => '3', '٤' => '4', '٥' => '5', '٦' => '6', '٧' => '7', '٨' => '8', '٩' => '9']);
+    $s = preg_replace('/[\s\-()]/', '', $s);
+    if (preg_match('/^(\+98|0098|98)(9\d{9})$/', $s, $m)) $s = '0' . $m[2];
+    elseif (preg_match('/^9\d{9}$/', $s)) $s = '0' . $s;
+    return $s;
+}
+function valid_phone(string $s): bool { return (bool) preg_match('/^09\d{9}$/', $s); }
 
 // ---------- درخواست ----------
 function read_json(): array {
@@ -117,7 +222,7 @@ function bearer_token(): string {
 function auth(PDO $pdo): array {
     $t = bearer_token();
     if ($t === '') fail(401, 'no_token', 'ابتدا وارد شوید.');
-    $st = $pdo->prepare('SELECT t.user_id, t.device_id, t.expires, u.username, u.name, u.role, u.active FROM rw_tokens t JOIN rw_users u ON u.id = t.user_id WHERE t.token_hash = ?');
+    $st = $pdo->prepare('SELECT t.user_id, t.device_id, t.expires, u.username, u.name, u.role, u.active, u.last_ws FROM rw_tokens t JOIN rw_users u ON u.id = t.user_id WHERE t.token_hash = ?');
     $st->execute([hash('sha256', $t)]);
     $r = $st->fetch();
     $now = now_ms();
@@ -126,17 +231,17 @@ function auth(PDO $pdo): array {
     // تمدید خودکار
     $pdo->prepare('UPDATE rw_tokens SET last_seen = ?, expires = ? WHERE token_hash = ?')
         ->execute([$now, $now + TOKEN_DAYS * 86400000, hash('sha256', $t)]);
-    return ['id' => (int) $r['user_id'], 'device_id' => (int) $r['device_id'], 'username' => $r['username'], 'name' => $r['name'], 'role' => $r['role']];
+    return ['id' => (int) $r['user_id'], 'device_id' => (int) $r['device_id'], 'username' => $r['username'], 'name' => $r['name'], 'role' => $r['role'], 'last_ws' => (int) $r['last_ws']];
 }
 
 function require_admin(array $u): void { if ($u['role'] !== 'admin') fail(403, 'forbidden', 'فقط مدیر دسترسی دارد.'); }
 
-function too_many_attempts(PDO $pdo, string $username): bool {
-    $since = now_ms() - 15 * 60000;
+function too_many_attempts(PDO $pdo, string $username, int $max = 10, int $minutes = 15): bool {
+    $since = now_ms() - $minutes * 60000;
     $pdo->prepare('DELETE FROM rw_attempts WHERE ts < ?')->execute([now_ms() - 86400000]);
-    $st = $pdo->prepare('SELECT COUNT(*) FROM rw_attempts WHERE ts > ? AND (ip = ? OR username = ?)');
+    $st = $pdo->prepare('SELECT COUNT(*) FROM rw_attempts WHERE ts > ? AND (ip = ? OR username = ?) AND username ' . (str_starts_with($username, 'reg:') ? "LIKE 'reg:%'" : "NOT LIKE 'reg:%'"));
     $st->execute([$since, client_ip(), $username]);
-    return (int) $st->fetchColumn() >= 10;
+    return (int) $st->fetchColumn() >= $max;
 }
 function record_attempt(PDO $pdo, string $username): void {
     $pdo->prepare('INSERT INTO rw_attempts (ip, username, ts) VALUES (?, ?, ?)')->execute([client_ip(), $username, now_ms()]);
@@ -146,7 +251,7 @@ function valid_username(string $u): bool { return (bool) preg_match('/^[A-Za-z0-
 function valid_password(string $p): bool { return mb_strlen($p) >= 8 && mb_strlen($p) <= 200; }
 
 function public_user(array $r): array {
-    return ['id' => (int) $r['id'], 'username' => $r['username'], 'name' => $r['name'], 'role' => $r['role'], 'active' => (bool) (int) $r['active']];
+    return ['id' => (int) $r['id'], 'username' => $r['username'], 'name' => $r['name'], 'role' => $r['role'], 'active' => (bool) (int) ($r['active'] ?? 1)];
 }
 
 // ---------- همگام‌سازی ----------
@@ -173,6 +278,6 @@ function next_revs(PDO $pdo, int $n): int {
 
 function upsert_sql(PDO $pdo): string {
     return is_sqlite($pdo)
-        ? 'INSERT INTO rw_records (coll, rid, data, rev, deleted, updated_by, updated_dev, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(coll, rid) DO UPDATE SET data = excluded.data, rev = excluded.rev, deleted = excluded.deleted, updated_by = excluded.updated_by, updated_dev = excluded.updated_dev, updated_at = excluded.updated_at'
-        : 'INSERT INTO rw_records (coll, rid, data, rev, deleted, updated_by, updated_dev, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE data = VALUES(data), rev = VALUES(rev), deleted = VALUES(deleted), updated_by = VALUES(updated_by), updated_dev = VALUES(updated_dev), updated_at = VALUES(updated_at)';
+        ? 'INSERT INTO rw_records (ws_id, coll, rid, data, rev, deleted, updated_by, updated_dev, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(ws_id, coll, rid) DO UPDATE SET data = excluded.data, rev = excluded.rev, deleted = excluded.deleted, updated_by = excluded.updated_by, updated_dev = excluded.updated_dev, updated_at = excluded.updated_at'
+        : 'INSERT INTO rw_records (ws_id, coll, rid, data, rev, deleted, updated_by, updated_dev, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE data = VALUES(data), rev = VALUES(rev), deleted = VALUES(deleted), updated_by = VALUES(updated_by), updated_dev = VALUES(updated_dev), updated_at = VALUES(updated_at)';
 }

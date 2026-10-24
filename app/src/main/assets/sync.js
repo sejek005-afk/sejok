@@ -171,35 +171,41 @@ const _closeModalOrig = closeModal;
 closeModal = function () { _closeModalOrig(); if (syRenderLater) { syRenderLater = false; render(); } };
 
 // ---------- چرخه همگام‌سازی ----------
+function syBody(changes) {
+  return '{"ws":' + (SY.ws || 0) + ',"since":' + (SY.rev || 0) + ',"skipOwn":' + (SY.fresh ? 'false' : 'true') + ',"changes":' + changes + '}';
+}
 async function syncNow(manual) {
-  if (!syncLoggedIn() || DB_CORRUPT || typeof fetch !== 'function') return false;
+  if (!syncLoggedIn() || !SY.ws || DB_CORRUPT || typeof fetch !== 'function') return false;
   if (syBusy) { syAgain = true; return false; }
   syBusy = true; syAgain = false;
-  const startUser = SY.token;
+  const startToken = SY.token, startWs = SY.ws;
+  const stale = () => SY.token !== startToken || SY.ws !== startWs;
   let anyChange = false;
   try {
     // ۱) اول دریافت تغییرات دیگران
     let more = true;
     while (more) {
-      const r = await syApi('sync', { since: SY.rev || 0, changes: [] });
-      if (SY.token !== startUser) return false;
+      const r = await syApi('sync', syBody('[]'));
+      if (stale()) return false;
       if (syApplyPage(r.changes)) { anyChange = true; syAfterApply(); }
       SY.rev = r.rev; more = !!r.more; sySave();
     }
+    if (SY.fresh) { SY.fresh = false; sySave(); }
     // ۲) ارسال تغییرات این گوشی (در بسته‌های کوچک)
     const pend = syPending(syCurrent());
     for (let i = 0; i < pend.length;) {
       const chunk = []; let bytes = 0;
       while (i < pend.length && chunk.length < 300 && (bytes < 2000000 || !chunk.length)) { const x = pend[i++]; chunk.push(x); bytes += x.s ? x.s.length : 20; }
-      const body = '{"since":' + (SY.rev || 0) + ',"changes":[' + chunk.map(x => '{"c":' + JSON.stringify(x.c) + ',"id":' + JSON.stringify(x.id) + ',"d":' + (x.s == null ? 'null' : x.s) + '}').join(',') + ']}';
+      const body = syBody('[' + chunk.map(x => '{"c":' + JSON.stringify(x.c) + ',"id":' + JSON.stringify(x.id) + ',"d":' + (x.s == null ? 'null' : x.s) + '}').join(',') + ']');
       const r = await syApi('sync', body);
-      if (SY.token !== startUser) return false;
+      if (stale()) return false;
       for (const x of chunk) { if (x.s == null) delete SY.snap[x.k]; else SY.snap[x.k] = syHash(x.s); }
       if (syApplyPage(r.changes)) { anyChange = true; syAfterApply(); }
       SY.rev = r.rev; sySave();
       more = !!r.more;
       while (more) {
-        const r2 = await syApi('sync', { since: SY.rev, changes: [] });
+        const r2 = await syApi('sync', syBody('[]'));
+        if (stale()) return false;
         if (syApplyPage(r2.changes)) { anyChange = true; syAfterApply(); }
         SY.rev = r2.rev; more = !!r2.more; sySave();
       }
@@ -210,9 +216,13 @@ async function syncNow(manual) {
     return true;
   } catch (e) {
     if (e.code === 'bad_token' || e.code === 'no_token' || e.code === 'disabled') {
-      syErr = e.message;
-      syEndSession(false);
+      syErr = '';
       toast(e.message);
+      syEndSession(false, true);
+    } else if (e.code === 'not_member') {
+      // دسترسی به حساب مشترک برداشته شده: برگشت به حساب خود کاربر
+      toast(e.message);
+      syEnterWs(SY.ownWs, false);
     } else {
       syErr = e.message || 'خطا در همگام‌سازی';
       if (manual) toast(syErr);
@@ -220,11 +230,16 @@ async function syncNow(manual) {
     return false;
   } finally {
     syBusy = false;
-    if (cur().name === 'settings' || cur().name === 'users') { const modal = document.getElementById('modal'); if (modal && modal.classList.contains('hidden')) render(); }
+    syRerender();
     if (syAgain) sySchedule(1500);
   }
 }
 window.syncNow = syncNow;
+function syRerender() {
+  if (!['settings', 'users', 'auth'].includes(cur().name) && !syGate()) return;
+  const modal = document.getElementById('modal');
+  if (modal && modal.classList.contains('hidden')) render();
+}
 function sySchedule(ms) {
   if (!syncLoggedIn()) return;
   clearTimeout(syTimer);
@@ -233,66 +248,204 @@ function sySchedule(ms) {
 const _saveSync = save;
 save = function () { _saveSync(); if (!syApplying) sySchedule(3000); };
 
-// پایان نشست: اطلاعات روی گوشی می‌ماند، اما وضعیت همگام‌سازی پاک می‌شود
-function syEndSession(callServer) {
+function syWipeLocal() {
+  DB = fix({}); DB_CORRUPT = null;
+  if (window.setAsset) { setAsset('logo', ''); setAsset('stamp', ''); }
+  syApplying = true; try { save(); } finally { syApplying = false; }
+}
+// پایان نشست. wipe: اطلاعات این حساب از گوشی پاک شود (روی سرور می‌ماند)
+function syEndSession(callServer, wipe) {
   if (callServer && SY.token) syApi('logout', {}).catch(() => { });
   SY = { snap: {}, url: SY.url, lastUser: SY.user ? SY.user.username : SY.lastUser };
   sySave();
+  if (wipe) syWipeLocal();
+  stack = [{ name: 'home' }]; closeModal(); render();
 }
 
-// ---------- ورود ----------
+// ---------- حساب‌ها (اطلاعات جدا برای هر کاربر، قابل اشتراک) ----------
+function syWsName(w) {
+  if (!w) return '';
+  if (w.role === 'owner') return 'حساب خودم';
+  return 'حساب ' + (w.owner.name || w.owner.username);
+}
+function syCurWs() { return (SY.wsList || []).find(w => w.id === SY.ws) || null; }
+let syMeAt = 0;
+async function syRefreshMe(force) {
+  if (!syncLoggedIn() || typeof fetch !== 'function') return;
+  if (!force && Date.now() - syMeAt < 30000) return;
+  syMeAt = Date.now();
+  let r;
+  try { r = await syApi('me', {}); } catch (e) {
+    if (e.code === 'bad_token' || e.code === 'no_token' || e.code === 'disabled') { toast(e.message); syEndSession(false, true); }
+    return;
+  }
+  SY.user = r.user; SY.wsList = r.workspaces; SY.ownWs = r.ownWs;
+  // نسخه قبلی برنامه حساب نداشت: همان حسابی که اطلاعات قبلی در آن است انتخاب می‌شود
+  if (!SY.ws) { SY.ws = r.ws; sySchedule(300); }
+  const seen = SY.seenWs || [];
+  const fresh = r.workspaces.filter(w => w.role !== 'owner' && !seen.includes(w.id));
+  SY.seenWs = r.workspaces.map(w => w.id);
+  sySave();
+  if (fresh.length && seen.length) toast(`${fresh.map(w => w.owner.name || w.owner.username).join('، ')} حسابش را با شما به اشتراک گذاشت؛ از تنظیمات وارد آن شوید`);
+  if (SY.ws && !r.workspaces.some(w => w.id === SY.ws)) { toast('دسترسی شما به حساب مشترک برداشته شد'); syEnterWs(SY.ownWs, false); return; }
+  syRerender();
+}
+// ورود به یک حساب: اطلاعات حساب فعلی (که روی سرور هست) از گوشی برداشته و اطلاعات حساب جدید دریافت می‌شود
+async function syEnterWs(id, checkPending) {
+  if (!id) { if (!checkPending) syRefreshMe(true).then(() => { if (SY.ownWs) syEnterWs(SY.ownWs, false); }); return; }
+  if (checkPending) {
+    if (syBusy) { toast('کمی صبر کنید؛ همگام‌سازی در جریان است'); return; }
+    await syncNow(false);
+    const pend = syPending(syCurrent()).length;
+    if (pend) { toast(`${faDigits(pend)} تغییر هنوز به سرور نرسیده؛ اول اینترنت را وصل کنید و «همگام‌سازی الان» را بزنید`); return; }
+    try { await syApi('use_ws', { ws: id }); } catch (e) { toast(e.message); return; }
+  } else {
+    syApi('use_ws', { ws: id }).catch(() => { });
+  }
+  syWipeLocal();
+  SY.ws = id; SY.rev = 0; SY.snap = {}; SY.fresh = true; SY.last = 0;
+  sySave(); SY_MEMBERS = null;
+  stack = [{ name: 'home' }]; closeModal(); render();
+  toast('در حال دریافت اطلاعات حساب…');
+  syncNow(false).then(ok => { if (ok) toast('اطلاعات حساب دریافت شد'); });
+}
+window.syEnterWs = syEnterWs;
+
+let SY_MEMBERS = null, SY_MEMBERS_WS = 0;
+function syLoadMembers() {
+  const ws = SY.ws;
+  syApi('share_list', { ws }).then(r => { SY_MEMBERS = r.members; SY_MEMBERS_WS = ws; syRerender(); }).catch(() => { });
+}
+function syShareAdd() {
+  openForm('اشتراک حساب با شخص دیگر', [
+    { k: 'username', label: 'شماره موبایل (نام کاربری) آن شخص', ltr: true, req: true, hint: 'آن شخص باید قبلاً در برنامه ثبت‌نام کرده باشد. بعد از افزودن، او هم همین اطلاعات را می‌بیند و می‌تواند تغییر دهد.' },
+  ], o => {
+    syApi('share_add', { ws: SY.ws, username: syNormPhone(o.username) || o.username }).then(r => {
+      closeModal(); toast(`${r.member.name || r.member.username} به حساب اضافه شد`); syLoadMembers();
+    }).catch(e => toast(e.message));
+    return false;
+  });
+}
+window.syShareAdd = syShareAdd;
+function syShareRemove(uid, name) {
+  const self = SY.user && uid === SY.user.id;
+  askConfirm(self ? 'از این حساب مشترک خارج می‌شوید؟ دیگر اطلاعات آن را نمی‌بینید.' : `دسترسی «${name}» به این حساب برداشته شود؟`, () => {
+    syApi('share_remove', { ws: SY.ws, user_id: uid }).then(() => {
+      if (self) { syRefreshMe(true); syEnterWs(SY.ownWs, false); }
+      else { toast('دسترسی برداشته شد'); syLoadMembers(); }
+    }).catch(e => toast(e.message));
+  });
+}
+window.syShareRemove = syShareRemove;
+
+// ---------- ورود و ثبت‌نام ----------
 function syDeviceLabel() {
   try { if (window.Android && Android.deviceName) return String(Android.deviceName()).slice(0, 100); } catch (e) { }
   const m = /Android [^;]*;\s*([^)]+)\)/.exec((navigator && navigator.userAgent) || '');
   return m ? m[1].trim().slice(0, 100) : 'web';
 }
-function syncLoginForm() {
-  openForm('ورود به حساب', [
-    { k: 'url', label: 'نشانی سرور', value: SY.url || DEFAULT_SERVER, ltr: true, req: true },
-    { k: 'username', label: 'نام کاربری', value: SY.lastUser || '', ltr: true, req: true },
-    { k: 'password', label: 'رمز عبور', type: 'password', req: true },
-  ], o => { syDoLogin(o); return false; });
+function syNormPhone(s) {
+  s = toEn(s).replace(/[\s\-()]/g, '');
+  let m = /^(\+98|0098|98)(9\d{9})$/.exec(s);
+  if (m) return '0' + m[2];
+  if (/^9\d{9}$/.test(s)) return '0' + s;
+  return /^09\d{9}$/.test(s) ? s : '';
 }
-let syLoginBusy = false;
-async function syDoLogin(o) {
-  if (syLoginBusy) return;
-  const url = syNormUrl(o.url);
-  if (!/^https:\/\//i.test(url) && !/^http:\/\/(localhost|127\.0\.0\.1|10\.0\.2\.2)(:\d+)?\//i.test(url)) { toast('نشانی سرور باید با https:// شروع شود'); return; }
-  syLoginBusy = true; toast('در حال ورود…');
+// نمای ورود/ثبت‌نام؛ تا وقتی کاربر وارد نشده، به‌جای برنامه نمایش داده می‌شود
+let SY_AUTH = { mode: 'register', busy: false, err: '', showUrl: false };
+function syGate() { return typeof fetch === 'function' && !syncLoggedIn() && !DB_CORRUPT; }
+window.authGate = () => syGate() ? 'auth' : null;
+V.auth = () => {
+  const reg = SY_AUTH.mode === 'register';
+  const inp = (id, label, attrs) => `<label class="fld">${label}<input id="${id}" ${attrs || ''}></label>`;
+  let h = `<div style="text-align:center;margin:8px 0 14px"><img src="logo.png" alt="ایشیم" style="width:190px;max-width:60%"></div>
+  <div class="card">
+    <div class="seg" style="display:flex;gap:6px;margin-bottom:12px">
+      <button class="btn ${reg ? 'pri' : ''}" style="flex:1;margin:0" onclick="syAuthMode('register')">ثبت‌نام</button>
+      <button class="btn ${reg ? '' : 'pri'}" style="flex:1;margin:0" onclick="syAuthMode('login')">ورود</button>
+    </div>
+    ${reg ? `<div class="mut" style="margin-bottom:8px">برای شروع، با شماره موبایل خود یک حساب بسازید. اطلاعات شما روی سرور ذخیره می‌شود و در هر گوشی با همین شماره و رمز در دسترس است.</div>` : `<div class="mut" style="margin-bottom:8px">اگر قبلاً حساب ساخته‌اید، با شماره و رمز خود وارد شوید.</div>`}
+    ${reg ? inp('au_name', 'نام و نام خانوادگی', 'autocomplete="name"') : ''}
+    ${inp('au_user', reg ? 'شماره موبایل' : 'شماره موبایل (یا نام کاربری)', `inputmode="${reg ? 'tel' : 'text'}" dir="ltr" style="text-align:left" placeholder="09121234567" autocomplete="username" value="${esc(SY.lastUser || '')}"`)}
+    ${inp('au_pass', reg ? 'رمز عبور (حداقل ۸ کاراکتر)' : 'رمز عبور', 'type="password" dir="ltr" style="text-align:left" autocomplete="' + (reg ? 'new-password' : 'current-password') + '"')}
+    ${reg ? inp('au_pass2', 'تکرار رمز عبور', 'type="password" dir="ltr" style="text-align:left" autocomplete="new-password"') : ''}
+    ${SY_AUTH.showUrl ? inp('au_url', 'نشانی سرور', `dir="ltr" style="text-align:left" value="${esc(SY.url || DEFAULT_SERVER)}"`) : ''}
+    ${SY_AUTH.err ? `<div style="color:var(--bad);margin:8px 0">${esc(SY_AUTH.err)}</div>` : ''}
+    <button class="btn pri wide" ${SY_AUTH.busy ? 'disabled' : ''} onclick="syAuthSubmit()">${SY_AUTH.busy ? 'لطفاً صبر کنید…' : reg ? 'ساخت حساب' : 'ورود'}</button>
+    ${reg && syHasLocalData() ? '<div class="mut" style="margin-top:8px">اطلاعاتی که الان روی این گوشی هست، بعد از ثبت‌نام به حساب جدید شما منتقل می‌شود.</div>' : ''}
+    <div class="mut" style="margin-top:10px;font-size:12px">برای اولین ورود، اینترنت لازم است. بعد از آن برنامه بدون اینترنت هم کار می‌کند.</div>
+  </div>
+  <div style="text-align:center"><button class="btn" style="background:none;box-shadow:none;font-size:12px;opacity:.7" onclick="SY_AUTH.showUrl=!SY_AUTH.showUrl;render()">تنظیمات سرور</button></div>`;
+  return { title: 'ایشیم', html: h, logo: true };
+};
+function syAuthMode(m) { SY_AUTH.mode = m; SY_AUTH.err = ''; render(); }
+window.syAuthMode = syAuthMode;
+const syVal = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+async function syAuthSubmit() {
+  if (SY_AUTH.busy) return;
+  const reg = SY_AUTH.mode === 'register';
+  const name = syVal('au_name').trim(), rawUser = syVal('au_user').trim(), pass = syVal('au_pass'), pass2 = syVal('au_pass2');
+  const url = syNormUrl(SY_AUTH.showUrl ? syVal('au_url') : (SY.url || DEFAULT_SERVER));
+  const phone = syNormPhone(rawUser);
+  const err = m => { SY_AUTH.err = m; render(); };
+  if (reg) {
+    if (!name) return err('نام را وارد کنید.');
+    if (!phone) return err('شماره موبایل را درست وارد کنید (مثال: 09121234567).');
+    if (pass.length < 8) return err('رمز باید حداقل ۸ کاراکتر باشد.');
+    if (pass !== pass2) return err('رمز و تکرار آن یکی نیستند.');
+  } else if (!rawUser || !pass) return err('شماره و رمز را وارد کنید.');
+  if (!/^https:\/\//i.test(url) && !/^http:\/\/(localhost|127\.0\.0\.1|10\.0\.2\.2)(:\d+)?\//i.test(url)) return err('نشانی سرور باید با https:// شروع شود.');
+  SY_AUTH.busy = true; SY_AUTH.err = ''; render();
   let r;
-  try { r = await syApi('login', { username: o.username, password: o.password, device: syDeviceLabel() }, url); }
-  catch (e) { toast(e.message); return; }
-  finally { syLoginBusy = false; }
+  try {
+    r = await syApi(reg ? 'register' : 'login', { username: phone || rawUser, password: pass, name, device: syDeviceLabel() }, url);
+  } catch (e) {
+    SY_AUTH.busy = false;
+    if (e.code === 'exists') SY_AUTH.mode = 'login';
+    return err(e.message);
+  }
+  SY_AUTH.busy = false; SY_AUTH.err = '';
+  syStartSession(url, r);
+}
+window.syAuthSubmit = syAuthSubmit;
+function syStartSession(url, r) {
   const start = () => {
-    SY = { url, token: r.token, deviceId: r.deviceId, user: r.user, rev: 0, snap: {}, lastUser: r.user.username };
-    sySave(); closeModal(); render();
-    toast('وارد شدید؛ در حال همگام‌سازی…');
-    syncNow(true);
+    SY = { url, token: r.token, deviceId: r.deviceId, user: r.user, ws: r.ws, ownWs: r.ownWs, wsList: r.workspaces,
+      seenWs: r.workspaces.map(w => w.id), rev: 0, snap: {}, fresh: true, lastUser: r.user.username };
+    sySave(); closeModal(); stack = [{ name: 'home' }]; render();
+    toast(r.serverHasData ? 'وارد شدید؛ در حال دریافت اطلاعات…' : 'خوش آمدید!');
+    syncNow(false);
   };
   if (r.serverHasData && syHasLocalData()) {
     window._syStart = () => {
       // پیش از جایگزینی، از اطلاعات فعلی فایل پشتیبان گرفته می‌شود
       try { exportData(); } catch (e) { }
-      DB = fix({}); if (window.setAsset) { setAsset('logo', ''); setAsset('stamp', ''); }
-      syApplying = true; try { save(); } finally { syApplying = false; }
+      syWipeLocal();
       start();
     };
     window._syCancel = () => {
       fetch(url + 'index.php?r=logout', { method: 'POST', headers: { Authorization: 'Bearer ' + r.token, 'X-Eshim-Token': r.token } }).catch(() => { });
       closeModal();
     };
-    showModal(`<div class="sheet"><div class="sh-head"><b>سرور از قبل اطلاعات دارد</b></div><div class="sh-body">
-      <p>روی سرور اطلاعات ثبت شده است و این گوشی هم اطلاعات جداگانه دارد. این دو را نمی‌توان بدون خطر تداخل یکی کرد.</p>
-      <p>با «دریافت اطلاعات سرور»، اول یک فایل پشتیبان از اطلاعات فعلی این گوشی در پوشه Download ذخیره می‌شود و بعد اطلاعات سرور جایگزین آن می‌شود.</p></div>
-      <div class="sh-foot"><button class="btn pri" onclick="_syStart()">دریافت اطلاعات سرور</button><button class="btn" onclick="_syCancel()">انصراف</button></div></div>`);
+    showModal(`<div class="sheet"><div class="sh-head"><b>این حساب از قبل اطلاعات دارد</b></div><div class="sh-body">
+      <p>روی سرور برای این حساب اطلاعات ثبت شده است و این گوشی هم اطلاعات جداگانه دارد. این دو را نمی‌توان بدون خطر تداخل یکی کرد.</p>
+      <p>با «دریافت اطلاعات حساب»، اول یک فایل پشتیبان از اطلاعات فعلی این گوشی در پوشه Download ذخیره می‌شود و بعد اطلاعات حساب جایگزین آن می‌شود.</p></div>
+      <div class="sh-foot"><button class="btn pri" onclick="_syStart()">دریافت اطلاعات حساب</button><button class="btn" onclick="_syCancel()">انصراف</button></div></div>`);
     return;
   }
   start();
 }
-window.syncLoginForm = syncLoginForm;
-function syncLogout() {
-  askConfirm('از حساب خارج می‌شوید؟ اطلاعات روی همین گوشی می‌ماند، اما دیگر با سرور همگام نمی‌شود.', () => {
-    syEndSession(true); render(); toast('از حساب خارج شدید');
+
+async function syncLogout() {
+  if (syBusy) { toast('کمی صبر کنید؛ همگام‌سازی در جریان است'); return; }
+  await syncNow(false);
+  const pend = syPending(syCurrent()).length;
+  const msg = pend
+    ? `${faDigits(pend)} تغییر هنوز به سرور نرسیده (اینترنت وصل نیست). اگر خارج شوید این تغییرات فقط در فایل پشتیبانی که الان ذخیره می‌شود می‌ماند. خارج می‌شوید؟`
+    : 'از حساب خارج می‌شوید؟ اطلاعات روی سرور می‌ماند و با ورود دوباره برمی‌گردد.';
+  askConfirm(msg, () => {
+    if (pend) { try { exportData(); } catch (e) { } }
+    syEndSession(true, true); toast('از حساب خارج شدید');
   });
 }
 window.syncLogout = syncLogout;
@@ -321,27 +474,54 @@ function syAgo(t) {
 }
 function syncCard() {
   if (!syncLoggedIn()) {
-    return `<div class="card"><b>حساب کاربری و همگام‌سازی</b>
-      <div class="mut" style="margin:4px 0 10px">با ورود به حساب، اطلاعات روی سرور ذخیره و بین همه گوشی‌ها مشترک می‌شود. برنامه بدون اینترنت هم کار می‌کند و هر وقت اینترنت وصل شد همگام می‌شود.</div>
-      ${syErr ? `<div class="mut" style="color:var(--bad);margin-bottom:8px">${esc(syErr)}</div>` : ''}
-      <button class="btn pri wide" onclick="syncLoginForm()">${ic('in')} ورود به حساب</button></div>`;
+    return `<div class="card"><b>حساب کاربری</b>
+      <div class="mut" style="margin:4px 0 10px">با ورود به حساب، اطلاعات روی سرور ذخیره و در هر گوشی در دسترس است.</div>
+      <button class="btn pri wide" onclick="syAuthMode('login');tab('home')">${ic('in')} ورود یا ثبت‌نام</button></div>`;
   }
+  syRefreshMe(false);
   const u = SY.user || {};
+  const w = syCurWs();
+  const isOwner = w ? w.role === 'owner' : true;
+  if (SY_MEMBERS_WS !== SY.ws) { SY_MEMBERS = null; SY_MEMBERS_WS = SY.ws; syLoadMembers(); }
   let pend = 0; try { pend = syPending(syCurrent()).length; } catch (e) { }
-  let host = SY.url; try { host = new URL(SY.url).host; } catch (e) { }
-  return `<div class="card"><div class="ct"><b>حساب کاربری</b><span class="badge ${syErr ? 'bad' : 'ok'}">${syBusy ? 'در حال همگام‌سازی' : syErr ? 'خطا' : 'متصل'}</span></div>
-    <div class="kv"><span>کاربر</span><span>${esc(u.name || u.username || '')} ${u.role === 'admin' ? '(مدیر)' : ''}</span></div>
-    <div class="kv"><span>سرور</span><span dir="ltr">${esc(host)}</span></div>
+  let h = `<div class="card"><div class="ct"><b>حساب کاربری</b><span class="badge ${syErr ? 'bad' : 'ok'}">${syBusy ? 'در حال همگام‌سازی' : syErr ? 'خطا' : 'متصل'}</span></div>
+    <div class="kv"><span>کاربر</span><span>${esc(u.name || '')}</span></div>
+    <div class="kv"><span>شماره / نام کاربری</span><span dir="ltr">${esc(u.username || '')}</span></div>
+    <div class="kv"><span>حساب فعال</span><span>${esc(syWsName(w) || '—')}</span></div>
     <div class="kv"><span>آخرین همگام‌سازی</span><span>${syAgo(SY.last)}</span></div>
     <div class="kv"><span>تغییرات ارسال‌نشده</span><span>${faDigits(pend)}</span></div>
     ${syErr ? `<div class="mut" style="color:var(--bad);margin:6px 0">${esc(syErr)}</div>` : ''}
     <button class="btn pri wide" onclick="syncNow(true)">همگام‌سازی الان</button>
-    ${u.role === 'admin' ? `<button class="btn dark wide" onclick="go('users')">مدیریت کاربران</button>` : ''}
     <div class="row" style="gap:8px"><button class="btn" style="flex:1" onclick="syncChangePass()">تغییر رمز</button><button class="btn danger" style="flex:1" onclick="syncLogout()">خروج از حساب</button></div></div>`;
+  // حساب‌های در دسترس
+  const list = SY.wsList || [];
+  if (list.length > 1) {
+    h += `<div class="card"><b>حساب‌های در دسترس</b><div class="mut" style="margin:4px 0 8px">حساب‌هایی که دیگران با شما به اشتراک گذاشته‌اند. با ورود به هر حساب، اطلاعات همان حساب نمایش داده می‌شود.</div>`;
+    for (const x of list) {
+      h += `<div class="kv"><span>${esc(syWsName(x))}${x.role !== 'owner' ? ` <span class="mut" dir="ltr">${esc(x.owner.username)}</span>` : ''}</span>
+        <span>${x.id === SY.ws ? '<span class="badge ok">فعال</span>' : `<button class="btn sm" style="margin:0" onclick="syEnterWs(${x.id},true)">ورود به این حساب</button>`}</span></div>`;
+    }
+    h += '</div>';
+  }
+  // اشتراک حساب فعال
+  h += `<div class="card"><b>${isOwner ? 'اشتراک حساب من' : 'افراد این حساب'}</b>
+    <div class="mut" style="margin:4px 0 8px">${isOwner ? 'با افزودن شماره یک کاربر دیگر، او هم همین اطلاعات را می‌بیند و می‌تواند ثبت و ویرایش کند.' : 'این حساب را صاحب آن با شما به اشتراک گذاشته است.'}</div>`;
+  if (SY_MEMBERS === null) h += '<div class="mut">در حال دریافت…</div>';
+  else {
+    for (const m of SY_MEMBERS) {
+      const me = SY.user && m.id === SY.user.id;
+      h += `<div class="kv"><span>${esc(m.name || m.username)} ${me ? '(شما)' : ''} <span class="mut" dir="ltr">${esc(m.username)}</span></span>
+        <span>${m.role === 'owner' ? '<span class="badge y">صاحب حساب</span>' : (isOwner || me) ? `<button class="btn sm danger" style="margin:0" onclick='syShareRemove(${m.id},${jsq(m.name || m.username)})'>${me ? 'خروج' : 'حذف'}</button>` : ''}</span></div>`;
+    }
+  }
+  if (isOwner) h += `<button class="btn dark wide" onclick="syShareAdd()">افزودن شخص با شماره</button>`;
+  h += '</div>';
+  if (u.role === 'admin') h += `<div class="card"><button class="btn wide" style="margin:0" onclick="go('users')">مدیریت کاربران سرور (بازنشانی رمز)</button></div>`;
+  return h;
 }
 window.syncCard = syncCard;
 
-// ---------- مدیریت کاربران (فقط مدیر) ----------
+// ---------- مدیریت کاربران سرور (فقط مدیر) ----------
 let SY_USERS = null, SY_USERS_ERR = '';
 function syLoadUsers() {
   syApi('users', {}).then(r => { SY_USERS = r.users; SY_USERS_ERR = ''; if (cur().name === 'users') render(); })
@@ -354,30 +534,27 @@ V.users = () => {
   if (SY_USERS_ERR) h += `<div class="card"><div style="color:var(--bad)">${esc(SY_USERS_ERR)}</div><button class="btn wide" onclick="SY_USERS_ERR='';SY_USERS=null;render()">تلاش دوباره</button></div>`;
   else if (SY_USERS === null) h += '<div class="card mut">در حال دریافت فهرست کاربران…</div>';
   else {
-    h += '<div class="mut" style="margin:0 4px 8px">همه کاربران به همه بخش‌ها دسترسی کامل دارند. کاربر غیرفعال نمی‌تواند وارد شود.</div>';
+    h += '<div class="mut" style="margin:0 4px 8px">همه کسانی که ثبت‌نام کرده‌اند. اگر کسی رمزش را فراموش کرد، از این‌جا رمز جدید بگذارید. کاربر غیرفعال نمی‌تواند وارد شود.</div>';
     for (const u of SY_USERS) {
       h += `<div class="card" onclick="syUserForm(${u.id})" style="cursor:pointer"><div class="ct"><b>${esc(u.name || u.username)}</b>
-        <span class="badge ${u.active ? (u.role === 'admin' ? 'y' : 'ok') : 'bad'}">${!u.active ? 'غیرفعال' : u.role === 'admin' ? 'مدیر' : 'کاربر'}</span></div>
+        <span class="badge ${u.active ? (u.role === 'admin' ? 'y' : 'ok') : 'bad'}">${!u.active ? 'غیرفعال' : u.role === 'admin' ? 'مدیر سرور' : 'کاربر'}</span></div>
         <div class="mut" dir="ltr" style="text-align:right">${esc(u.username)}</div></div>`;
     }
   }
-  return { title: 'مدیریت کاربران', html: h, fab: 'syUserForm(0)' };
+  return { title: 'کاربران سرور', html: h };
 };
 function syUserForm(id) {
-  const u = id ? (SY_USERS || []).find(x => x.id === id) : null;
-  if (id && !u) return;
-  const fields = [];
-  if (!u) fields.push({ k: 'username', label: 'نام کاربری (حروف انگلیسی و عدد)', ltr: true, req: true });
-  fields.push({ k: 'name', label: 'نام', value: u ? u.name : '' });
-  fields.push({ k: 'password', label: u ? 'رمز جدید (خالی = بدون تغییر)' : 'رمز عبور (حداقل ۸ کاراکتر)', type: 'password', req: !u });
-  fields.push({ k: 'role', label: 'نقش', type: 'select', value: u ? u.role : 'user', opts: [['user', 'کاربر'], ['admin', 'مدیر (مدیریت کاربران)']] });
-  fields.push({ k: 'active', label: 'وضعیت', type: 'select', value: u ? (u.active ? '1' : '0') : '1', opts: [['1', 'فعال'], ['0', 'غیرفعال']] });
-  openForm(u ? 'ویرایش کاربر' : 'کاربر جدید', fields, o => {
-    if (!u && !/^[A-Za-z0-9_.-]{3,32}$/.test(o.username)) { toast('نام کاربری فقط حروف انگلیسی، عدد و . _ - (۳ تا ۳۲ کاراکتر)'); return false; }
-    if ((o.password || !u) && o.password.length < 8) { toast('رمز باید حداقل ۸ کاراکتر باشد'); return false; }
-    const body = { id: u ? u.id : 0, name: o.name, role: o.role, active: o.active === '1', password: o.password };
-    if (!u) body.username = o.username;
-    syApi('user_save', body).then(() => { closeModal(); toast('ذخیره شد'); SY_USERS = null; syLoadUsers(); }).catch(e => toast(e.message));
+  const u = (SY_USERS || []).find(x => x.id === id);
+  if (!u) return;
+  openForm('ویرایش کاربر', [
+    { k: 'name', label: 'نام', value: u.name },
+    { k: 'password', label: 'رمز جدید (خالی = بدون تغییر)', type: 'password' },
+    { k: 'role', label: 'نقش', type: 'select', value: u.role, opts: [['user', 'کاربر'], ['admin', 'مدیر سرور']] },
+    { k: 'active', label: 'وضعیت', type: 'select', value: u.active ? '1' : '0', opts: [['1', 'فعال'], ['0', 'غیرفعال']] },
+  ], o => {
+    if (o.password && o.password.length < 8) { toast('رمز باید حداقل ۸ کاراکتر باشد'); return false; }
+    syApi('user_save', { id: u.id, name: o.name, role: o.role, active: o.active === '1', password: o.password })
+      .then(() => { closeModal(); toast('ذخیره شد'); SY_USERS = null; syLoadUsers(); }).catch(e => toast(e.message));
     return false;
   });
 }
@@ -388,8 +565,10 @@ if (syncLoggedIn()) {
   // اگر شناسه بعدی خارج از بازه این دستگاه است، اصلاح می‌شود (بدون تغییر رکوردها)
   const lo = SY.deviceId * ID_RANGE;
   if (!(DB.seq >= lo && DB.seq < lo + ID_RANGE)) DB.seq = syMaxInRange(lo, lo + ID_RANGE) + 1;
+  syRefreshMe(true);
   sySchedule(800);
 }
+if (syGate()) render();
 if (typeof setInterval === 'function') setInterval(() => { if (!document.hidden) syncNow(false); }, 60000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) sySchedule(500); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { sySchedule(500); syRefreshMe(false); } });
 if (typeof window.addEventListener === 'function') window.addEventListener('online', () => sySchedule(500));
