@@ -1,7 +1,7 @@
 <?php
 // ایشیم — API سرور
 // مسیرها با ?r=نام:
-//   ping, register, login, logout, me, change_password, use_ws, sync,
+//   ping, register, login, logout, me, change_password, delete_account, use_ws, sync,
 //   share_list, share_add, share_remove, users, user_save (دو مورد آخر فقط مدیر سرور)
 // هر کاربر یک «حساب» (workspace) دارد؛ صاحب حساب می‌تواند با نام کاربری (شماره موبایل)
 // کاربر دیگری را به حسابش اضافه کند تا هر دو همان اطلاعات را ببینند.
@@ -120,6 +120,32 @@ switch ($route) {
         $pdo->prepare('UPDATE rw_users SET pass_hash = ? WHERE id = ?')->execute([password_hash($new, PASSWORD_DEFAULT), $u['id']]);
         // خروج بقیه دستگاه‌ها
         $pdo->prepare('DELETE FROM rw_tokens WHERE user_id = ? AND token_hash <> ?')->execute([$u['id'], hash('sha256', bearer_token())]);
+        json_out(['ok' => true]);
+    }
+
+    case 'delete_account': {
+        // حذف کامل حساب کاربر با رمز: اطلاعات حساب خودش، عضویت‌ها و نشست‌ها پاک می‌شود
+        $u = auth($pdo);
+        $st = $pdo->prepare('SELECT pass_hash, role FROM rw_users WHERE id = ?');
+        $st->execute([$u['id']]);
+        $row = $st->fetch();
+        if (!$row || !password_verify((string) ($in['password'] ?? ''), (string) $row['pass_hash'])) fail(400, 'bad_old', 'رمز اشتباه است.');
+        if ($row['role'] === 'admin') fail(400, 'admin', 'حساب مدیر سرور را نمی‌توان حذف کرد.');
+        $pdo->beginTransaction();
+        try {
+            $ws = $pdo->prepare('SELECT id FROM rw_workspaces WHERE owner_id = ?');
+            $ws->execute([$u['id']]);
+            foreach ($ws->fetchAll() as $w) {
+                $pdo->prepare('DELETE FROM rw_records WHERE ws_id = ?')->execute([$w['id']]);
+                $pdo->prepare('DELETE FROM rw_members WHERE ws_id = ?')->execute([$w['id']]);
+                $pdo->prepare('DELETE FROM rw_workspaces WHERE id = ?')->execute([$w['id']]);
+            }
+            $pdo->prepare('DELETE FROM rw_members WHERE user_id = ?')->execute([$u['id']]);
+            $pdo->prepare('DELETE FROM rw_tokens WHERE user_id = ?')->execute([$u['id']]);
+            $pdo->prepare('DELETE FROM rw_devices WHERE user_id = ?')->execute([$u['id']]);
+            $pdo->prepare('DELETE FROM rw_users WHERE id = ?')->execute([$u['id']]);
+            $pdo->commit();
+        } catch (Throwable $e) { $pdo->rollBack(); throw $e; }
         json_out(['ok' => true]);
     }
 
