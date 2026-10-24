@@ -11,8 +11,8 @@ android {
         minSdk 21
         targetSdk 34
         // تنها محل تعریف نسخه؛ برنامه آن را از BuildConfig.VERSION_NAME می‌خواند
-        versionCode 13
-        versionName '2.3'
+        versionCode 14
+        versionName '2.4'
     }
 
     // کلید امضای نسخه release فقط از متغیرهای محیطی خوانده می‌شود (در GitHub Actions از Secrets).
