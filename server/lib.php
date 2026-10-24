@@ -194,9 +194,12 @@ function read_json(): array {
 }
 
 function cors(array $cfg): void {
+    // احراز هویت فقط با توکن در هدر است (نه کوکی)، پس پاسخ دادن به هر مبدأ خطر CSRF ندارد.
+    // اگر در config فهرست مبدأها محدود شده باشد (strict_origins = true)، فقط همان‌ها مجازند.
     $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
     $allowed = $cfg['allowed_origins'] ?? ['https://appassets.androidplatform.net'];
-    if ($origin !== '' && (in_array('*', $allowed, true) || in_array($origin, $allowed, true))) {
+    $strict = !empty($cfg['strict_origins']);
+    if ($origin !== '' && (!$strict || in_array('*', $allowed, true) || in_array($origin, $allowed, true))) {
         header('Access-Control-Allow-Origin: ' . $origin);
         header('Vary: Origin');
         header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Eshim-Token');
