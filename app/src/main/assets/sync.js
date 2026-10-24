@@ -357,7 +357,9 @@ function syGate() { return typeof fetch === 'function' && !syncLoggedIn() && !DB
 window.authGate = () => syGate() ? 'auth' : null;
 V.auth = () => {
   const reg = SY_AUTH.mode === 'register';
-  const inp = (id, label, attrs) => `<label class="fld">${label}<input id="${id}" ${attrs || ''}></label>`;
+  // مقدارهای تایپ‌شده نگه داشته می‌شوند تا اگر صفحه دوباره ساخته شد (مثلاً برگشتن به برنامه) پاک نشوند
+  const vals = SY_AUTH.vals || (SY_AUTH.vals = {});
+  const inp = (id, label, attrs) => `<label class="fld">${label}<input id="${id}" ${attrs || ''} value="${esc(vals[id] != null ? vals[id] : (id === 'au_user' ? (SY.lastUser || '') : id === 'au_url' ? (SY.url || DEFAULT_SERVER) : ''))}" oninput="SY_AUTH.vals[this.id]=this.value"></label>`;
   let h = `<div style="text-align:center;margin:8px 0 14px"><img src="logo.png" alt="ایشیم" style="width:190px;max-width:60%"></div>
   <div class="card">
     <div class="seg" style="display:flex;gap:6px;margin-bottom:12px">
@@ -366,10 +368,10 @@ V.auth = () => {
     </div>
     ${reg ? `<div class="mut" style="margin-bottom:8px">برای شروع، با شماره موبایل خود یک حساب بسازید. اطلاعات شما روی سرور ذخیره می‌شود و در هر گوشی با همین شماره و رمز در دسترس است.</div>` : `<div class="mut" style="margin-bottom:8px">اگر قبلاً حساب ساخته‌اید، با شماره و رمز خود وارد شوید.</div>`}
     ${reg ? inp('au_name', 'نام و نام خانوادگی', 'autocomplete="name"') : ''}
-    ${inp('au_user', reg ? 'شماره موبایل' : 'شماره موبایل (یا نام کاربری)', `inputmode="${reg ? 'tel' : 'text'}" dir="ltr" style="text-align:left" placeholder="09121234567" autocomplete="username" value="${esc(SY.lastUser || '')}"`)}
+    ${inp('au_user', reg ? 'شماره موبایل' : 'شماره موبایل (یا نام کاربری)', `inputmode="${reg ? 'tel' : 'text'}" dir="ltr" style="text-align:left" placeholder="09121234567" autocomplete="username"`)}
     ${inp('au_pass', reg ? 'رمز عبور (حداقل ۸ کاراکتر)' : 'رمز عبور', 'type="password" dir="ltr" style="text-align:left" autocomplete="' + (reg ? 'new-password' : 'current-password') + '"')}
     ${reg ? inp('au_pass2', 'تکرار رمز عبور', 'type="password" dir="ltr" style="text-align:left" autocomplete="new-password"') : ''}
-    ${SY_AUTH.showUrl ? inp('au_url', 'نشانی سرور', `dir="ltr" style="text-align:left" value="${esc(SY.url || DEFAULT_SERVER)}"`) : ''}
+    ${SY_AUTH.showUrl ? inp('au_url', 'نشانی سرور', 'dir="ltr" style="text-align:left"') : ''}
     ${SY_AUTH.err ? `<div style="color:var(--bad);margin:8px 0">${esc(SY_AUTH.err)}</div>` : ''}
     <button class="btn pri wide" ${SY_AUTH.busy ? 'disabled' : ''} onclick="syAuthSubmit()">${SY_AUTH.busy ? 'لطفاً صبر کنید…' : reg ? 'ساخت حساب' : 'ورود'}</button>
     ${reg && syHasLocalData() ? '<div class="mut" style="margin-top:8px">اطلاعاتی که الان روی این گوشی هست، بعد از ثبت‌نام به حساب جدید شما منتقل می‌شود.</div>' : ''}
@@ -404,7 +406,7 @@ async function syAuthSubmit() {
     if (e.code === 'exists') SY_AUTH.mode = 'login';
     return err(e.message);
   }
-  SY_AUTH.busy = false; SY_AUTH.err = '';
+  SY_AUTH.busy = false; SY_AUTH.err = ''; SY_AUTH.vals = {};
   syStartSession(url, r);
 }
 window.syAuthSubmit = syAuthSubmit;

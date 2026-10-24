@@ -49,7 +49,7 @@ switch ($route) {
         $phone = norm_phone(trim((string) ($in['username'] ?? '')));
         $password = (string) ($in['password'] ?? '');
         $name = mb_substr(trim((string) ($in['name'] ?? '')), 0, 100);
-        if (too_many_attempts($pdo, 'reg:' . $phone, 5, 60)) fail(429, 'too_many', 'تعداد ثبت‌نام از این اینترنت زیاد است؛ یک ساعت بعد دوباره امتحان کنید.');
+        if (too_many_attempts($pdo, 'reg:' . $phone, 20, 60)) fail(429, 'too_many', 'تعداد ثبت‌نام از این اینترنت زیاد است؛ یک ساعت بعد دوباره امتحان کنید.');
         if (!valid_phone($phone)) fail(400, 'bad_phone', 'شماره موبایل را درست وارد کنید (مثال: 09121234567).');
         if (!valid_password($password)) fail(400, 'weak', 'رمز باید حداقل ۸ کاراکتر باشد.');
         if ($name === '') fail(400, 'no_name', 'نام را وارد کنید.');
