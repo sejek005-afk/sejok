@@ -33,4 +33,6 @@ chmod($file, 0600);
 $all = glob($dir . '/eshim-*.json.gz') ?: [];
 sort($all);
 foreach (array_slice($all, 0, max(0, count($all) - 14)) as $old) @unlink($old);
-echo "ok " . basename($file) . " " . filesize($file) . "\n";
+// خروجی فقط در فایل گزارش (Cron اجازه هدایت خروجی نمی‌دهد و هر خروجی ایمیل می‌شود)
+@file_put_contents($dir . '/backup.log', date('Y-m-d H:i:s') . ' ok ' . basename($file) . ' ' . filesize($file) . "\n", FILE_APPEND);
+if (in_array('-v', $argv ?? [], true)) echo "ok " . basename($file) . "\n";
