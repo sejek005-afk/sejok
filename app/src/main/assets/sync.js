@@ -9,6 +9,7 @@ const SYNC_COLLS = ['cats', 'projects', 'workers', 'installers', 'contractors', 
 const ID_RANGE = 1e9;
 const DEFAULT_SERVER = 'https://eshim.ir/api/';
 // نشانی موقت قبلی همان سرور بود؛ نصب‌های قبلی خودکار به دامنه اصلی منتقل می‌شوند (نشست و اطلاعات همان است)
+const PRIVACY_URL = 'https://eshim.ir/privacy.html';
 const OLD_SERVERS = ['https://1496118093.cloudylink.com/~h438354/api/'];
 let SY = syLoad();
 if (SY.url && OLD_SERVERS.includes(SY.url)) { SY.url = DEFAULT_SERVER; try { localStorage.setItem(SYNC_KEY, JSON.stringify(SY)); } catch (e) { } }
@@ -404,6 +405,7 @@ V.auth = () => {
     <button class="btn pri wide" ${SY_AUTH.busy ? 'disabled' : ''} onclick="syAuthSubmit()">${SY_AUTH.busy ? 'لطفاً صبر کنید…' : reg ? 'ساخت حساب' : 'ورود'}</button>
     ${reg && syHasLocalData() ? '<div class="mut" style="margin-top:8px">اطلاعاتی که الان روی این گوشی هست، بعد از ثبت‌نام به حساب جدید شما منتقل می‌شود.</div>' : ''}
     <div class="mut" style="margin-top:10px;font-size:12px">برای اولین ورود، اینترنت لازم است. بعد از آن برنامه بدون اینترنت هم کار می‌کند.</div>
+    ${reg ? `<div class="mut" style="margin-top:6px;font-size:12px">با ساخت حساب، <a href="#" onclick="openExt(PRIVACY_URL);return false" style="color:inherit;text-decoration:underline">قوانین و حریم خصوصی</a> ایشیم را می‌پذیرید.</div>` : ''}
   </div>
   <div style="text-align:center"><button class="btn" style="background:none;box-shadow:none;font-size:12px;opacity:.7" onclick="SY_AUTH.showUrl=!SY_AUTH.showUrl;render()">تنظیمات سرور</button></div>`;
   return { title: 'ایشیم', html: h, logo: true };
@@ -494,6 +496,21 @@ function syncChangePass() {
 }
 window.syncChangePass = syncChangePass;
 
+function syDeleteAccount() {
+  openForm('حذف حساب کاربری', [
+    { k: 'pass', label: 'رمز عبور برای تأیید', type: 'password', req: true,
+      hint: 'حساب شما و همه اطلاعات «حساب خودم» از سرور و این گوشی برای همیشه پاک می‌شود و دسترسی کسانی که با آن‌ها به اشتراک گذاشته‌اید هم قطع می‌شود. حساب‌هایی که دیگران با شما به اشتراک گذاشته‌اند پاک نمی‌شوند. این کار قابل بازگشت نیست.' },
+  ], o => {
+    askConfirm('حساب و اطلاعات شما برای همیشه پاک شود؟ پیشنهاد می‌شود اول از تنظیمات «ذخیره فایل پشتیبان» را بزنید.', () => {
+      syApi('delete_account', { password: o.pass }).then(() => {
+        syEndSession(false, true); toast('حساب شما حذف شد');
+      }).catch(e => toast(e.message));
+    });
+    return false;
+  });
+}
+window.syDeleteAccount = syDeleteAccount;
+
 // ---------- کارت تنظیمات ----------
 function syAgo(t) {
   if (!t) return 'هنوز انجام نشده';
@@ -548,6 +565,8 @@ function syncCard() {
   if (isOwner) h += `<button class="btn dark wide" onclick="syShareAdd()">افزودن شخص با شماره</button>`;
   h += '</div>';
   if (u.role === 'admin') h += `<div class="card"><button class="btn wide" style="margin:0" onclick="go('users')">مدیریت کاربران سرور (بازنشانی رمز)</button></div>`;
+  h += `<div class="card"><button class="btn wide" style="margin:0 0 8px" onclick="openExt(PRIVACY_URL)">قوانین و حریم خصوصی</button>
+    ${u.role === 'admin' ? '' : '<button class="btn danger wide" style="margin:0" onclick="syDeleteAccount()">حذف حساب کاربری</button>'}</div>`;
   return h;
 }
 window.syncCard = syncCard;

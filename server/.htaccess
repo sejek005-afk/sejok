@@ -3,7 +3,7 @@ Options -Indexes
 DirectoryIndex index.php
 
 # فایل‌های داخلی از بیرون قابل دسترسی نیستند
-<FilesMatch "^(config\.php.*|lib\.php|.*\.sqlite.*|.*\.md|\.ht.*)$">
+<FilesMatch "^(config\.php.*|lib\.php|backup\.php|.*\.sqlite.*|.*\.md|\.ht.*)$">
     Require all denied
 </FilesMatch>
 
