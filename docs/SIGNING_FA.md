@@ -16,12 +16,12 @@
 در ترمینال (یا PowerShell) این دستور را بزنید:
 
 ```
-keytool -genkeypair -v -keystore rawano-release.jks -alias rawano -keyalg RSA -keysize 4096 -validity 10000
+keytool -genkeypair -v -keystore eshim-release.jks -alias rawano -keyalg RSA -keysize 4096 -validity 10000
 ```
 
 - دو بار رمز می‌خواهد (رمز فایل و رمز کلید). یک رمز قوی و طولانی بگذارید.
 - سؤال‌های نام و سازمان را هرطور خواستید جواب دهید و در آخر `yes` بزنید.
-- فایل `rawano-release.jks` ساخته می‌شود.
+- فایل `eshim-release.jks` ساخته می‌شود.
 
 **مهم:** این فایل و رمزها را در دو جای امن (مثلاً فلش و یک فضای ابری خصوصی) نگه دارید.
 اگر گم شوند، دیگر هیچ‌وقت نمی‌توانید نسخه‌ی جدید را روی برنامه‌ی نصب‌شده آپدیت کنید.
@@ -32,13 +32,13 @@ keytool -genkeypair -v -keystore rawano-release.jks -alias rawano -keyalg RSA -k
 **ویندوز (PowerShell)** — در پوشه‌ای که فایل در آن است:
 
 ```
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("rawano-release.jks")) | Set-Content -NoNewline rawano-release.b64.txt
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("eshim-release.jks")) | Set-Content -NoNewline eshim-release.b64.txt
 ```
 
-**لینوکس:** `base64 -w0 rawano-release.jks > rawano-release.b64.txt`
-**مک:** `base64 -i rawano-release.jks -o rawano-release.b64.txt`
+**لینوکس:** `base64 -w0 eshim-release.jks > eshim-release.b64.txt`
+**مک:** `base64 -i eshim-release.jks -o eshim-release.b64.txt`
 
-محتوای فایل `rawano-release.b64.txt` یک متن طولانی است که در مرحله‌ی بعد لازم دارید.
+محتوای فایل `eshim-release.b64.txt` یک متن طولانی است که در مرحله‌ی بعد لازم دارید.
 
 ## ۳) اضافه کردن Secretها در گیت‌هاب
 
@@ -48,12 +48,12 @@ keytool -genkeypair -v -keystore rawano-release.jks -alias rawano -keyalg RSA -k
 
 | نام (Name) | مقدار (Secret) |
 |---|---|
-| `SIGNING_KEYSTORE_BASE64` | کل متن داخل `rawano-release.b64.txt` |
+| `SIGNING_KEYSTORE_BASE64` | کل متن داخل `eshim-release.b64.txt` |
 | `SIGNING_STORE_PASSWORD` | رمز فایل کلید |
-| `SIGNING_KEY_ALIAS` | `rawano` |
+| `SIGNING_KEY_ALIAS` | `rawano` (نام داخلی کلید فعلی؛ از زمان نام قبلی برنامه مانده و عوض کردنش لازم نیست) |
 | `SIGNING_KEY_PASSWORD` | رمز کلید |
 
-۴. بعد از ذخیره، فایل `rawano-release.b64.txt` را از کامپیوتر پاک کنید (خود فایل `.jks` را نگه دارید).
+۴. بعد از ذخیره، فایل `eshim-release.b64.txt` را از کامپیوتر پاک کنید (خود فایل `.jks` را نگه دارید).
 
 ## ۴) ساخت دوباره
 
