@@ -396,6 +396,9 @@ public class MainActivity extends Activity {
         public String appVersion() { return BuildConfig.VERSION_NAME; }
 
         @JavascriptInterface
+        public int appVersionCode() { return BuildConfig.VERSION_CODE; }
+
+        @JavascriptInterface
         public String deviceName() { return (android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL).trim(); }
 
         // انتقال یک‌باره اطلاعات از مبدأ قدیمی file:// به مبدأ جدید
@@ -442,6 +445,12 @@ public class MainActivity extends Activity {
                 try {
                     Uri u = Uri.parse(url == null ? "" : url);
                     String sc = u.getScheme() == null ? "" : u.getScheme().toLowerCase(Locale.ROOT);
+                    if (sc.equals("bazaar")) {
+                        // صفحه برنامه در اپ بازار؛ اگر بازار نصب نبود، صفحه وب بازار
+                        try { startActivity(new Intent(Intent.ACTION_VIEW, u).setPackage("com.farsitel.bazaar")); }
+                        catch (Exception e) { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://cafebazaar.ir/app/" + getPackageName()))); }
+                        return;
+                    }
                     if (!sc.equals("https") && !sc.equals("tel") && !sc.equals("sms") && !sc.equals("smsto")) return;
                     startActivity(new Intent(Intent.ACTION_VIEW, u));
                 } catch (Exception e) {

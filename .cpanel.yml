@@ -6,7 +6,7 @@ deployment:
     - export DEPLOYPATH=/home/h438354/public_html/api/
     - export WEBPATH=/home/h438354/public_html/
     - /bin/mkdir -p $DEPLOYPATH
-    - /bin/cp server/index.php server/lib.php server/backup.php server/.htaccess $DEPLOYPATH
+    - /bin/cp server/index.php server/lib.php server/backup.php server/version.json server/.htaccess $DEPLOYPATH
     - /bin/sh -c "test -f ${DEPLOYPATH}config.php || /bin/cp server/install.php $DEPLOYPATH"
     - /bin/sh -c "test -f ${DEPLOYPATH}config.php && /bin/rm -f ${DEPLOYPATH}install.php; true"
     - /bin/cp web/index.html web/privacy.html web/icon-512.png web/favicon-64.png web/Vazirmatn.woff2 $WEBPATH

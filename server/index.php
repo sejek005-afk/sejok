@@ -19,7 +19,7 @@ $pdo = db($cfg);
 migrate_schema($pdo);
 $route = (string) ($_GET['r'] ?? '');
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-if ($route !== 'ping' && $method !== 'POST') fail(405, 'method');
+if ($route !== 'ping' && $route !== 'version' && $method !== 'POST') fail(405, 'method');
 $in = $method === 'POST' ? read_json() : [];
 
 // پاسخ مشترک ورود و ثبت‌نام: توکن جدید برای یک دستگاه جدید
@@ -42,6 +42,14 @@ function start_session(PDO $pdo, array $u, array $in): void {
 }
 
 switch ($route) {
+    case 'version': {
+        // آخرین نسخه برنامه برای پیام «نسخه جدید آمده» (در version.json کنار همین فایل)
+        $v = is_file(__DIR__ . '/version.json') ? json_decode((string) file_get_contents(__DIR__ . '/version.json'), true) : null;
+        if (!is_array($v)) $v = [];
+        json_out(['ok' => true, 'latest' => (int) ($v['latest'] ?? 0), 'name' => (string) ($v['name'] ?? ''), 'min' => (int) ($v['min'] ?? 0),
+            'message' => (string) ($v['message'] ?? ''), 'url' => (string) ($v['url'] ?? '')]);
+    }
+
     case 'ping':
         json_out(['ok' => true, 'app' => 'eshim', 'api' => API_VERSION]);
 
