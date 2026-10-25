@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [main]
+    branches: [main, diag]
   workflow_dispatch:
 
 # پیش‌فرض فقط خواندن؛ فقط مرحله انتشار اجازه نوشتن دارد
@@ -129,8 +129,8 @@ jobs:
           git init -q
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
-          git checkout -q -b apk
+          git checkout -q -b apk-diag
           echo "APK built from ${GITHUB_SHA}" > README.md
           git add -A
           git commit -q -m "APK for ${GITHUB_SHA}"
-          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" apk
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" apk-diag

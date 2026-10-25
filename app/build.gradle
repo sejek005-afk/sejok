@@ -12,6 +12,7 @@ android {
         targetSdk 34
         // تنها محل تعریف نسخه؛ برنامه آن را از BuildConfig.VERSION_NAME می‌خواند
         versionCode 19
+        applicationIdSuffix '.test'
         versionName '1.0'
     }
 
