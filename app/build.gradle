@@ -11,7 +11,7 @@ android {
         minSdk 21
         targetSdk 34
         // تنها محل تعریف نسخه؛ برنامه آن را از BuildConfig.VERSION_NAME می‌خواند
-        versionCode 18
+        versionCode 19
         versionName '1.0'
     }
 

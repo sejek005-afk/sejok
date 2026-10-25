@@ -1,7 +1,7 @@
 'use strict';
 // پیاده‌سازی قدیمی و ساده‌ی agg (بدون شاخص) برای مقایسه با نسخه سریع
 const REF_AGG = `(function (pred, pids) {
-  const r = { meters: 0, revenue: 0, material: 0, workers: 0, installers: 0, extras: 0, wdays: 0 };
+  const r = { meters: 0, revenue: 0, other: 0, material: 0, workers: 0, installers: 0, extras: 0, wdays: 0 };
   for (const e of DB.progress) {
     if (pids && !pids.has(e.projectId)) continue;
     if (!pred(e.date)) continue;
@@ -24,12 +24,12 @@ const REF_AGG = `(function (pred, pids) {
     if (x.who === 'i') r.installers += v; else r.workers += v;
   }
   for (const t of DB.tx) {
-    if (t.type !== 'extra') continue;
+    if (t.type !== 'extra' && t.type !== 'misc') continue;
     if (pids && !pids.has(t.projectId)) continue;
     if (!pred(t.date)) continue;
-    r.extras += Number(t.amount) || 0;
+    if (t.type === 'misc') r.other += Number(t.amount) || 0; else r.extras += Number(t.amount) || 0;
   }
-  r.net = r.revenue - r.material - r.workers - r.installers - r.extras;
+  r.net = r.revenue + r.other - r.material - r.workers - r.installers - r.extras;
   return r;
 })`;
 module.exports = { REF_AGG };

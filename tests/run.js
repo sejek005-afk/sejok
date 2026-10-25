@@ -37,6 +37,27 @@ test('import: malicious id strings are dropped or coerced', () => {
   for (const id of r.cats) assert.ok(Number.isInteger(id) && id > 0);
 });
 
+test('contract (کنترات) project and misc income are in the net', () => {
+  const t = boot();
+  const r = t.run(`(() => {
+    const c = { id: nid(), name: 'ک' }; DB.cats.push(c);
+    const p = { id: nid(), catId: c.id, name: 'پ', address: '', type: 'contract', area: 200, price: 0, laborPrice: 0, contract: 100000000, material: 20000000, created: '1405/08/01' };
+    DB.projects.push(p);
+    DB.progress.push({ id: nid(), projectId: p.id, date: '1405/08/02', meters: 50, installerId: null, instMeters: 0, instRate: 0, note: '' });
+    DB.tx.push({ id: nid(), type: 'misc', sub: '', amount: 3000000, date: '1405/08/02', note: 'ضایعات', workerId: null, installerId: null, projectId: p.id, contractorId: null });
+    DB.tx.push({ id: nid(), type: 'extra', sub: '', amount: 1000000, date: '1405/08/02', note: '', workerId: null, installerId: null, projectId: p.id, contractorId: null });
+    save();
+    const a = agg(ALL, new Set([p.id]));
+    const back = sanitizeDB(JSON.parse(JSON.stringify(DB))).db;
+    return { rev: a.revenue, other: a.other, mat: a.material, net: a.net, total: contractTotal(p), type: back.projects[0].type, contract: back.projects[0].contract, misc: back.tx[0].type };
+  })()`);
+  // 50 of 200 m => a quarter of the contract amount and a quarter of the material
+  eq(r, { rev: 25000000, other: 3000000, mat: 5000000, net: 25000000 + 3000000 - 5000000 - 1000000, total: 100000000, type: 'contract', contract: 100000000, misc: 'misc' });
+  t.run(`stack = [{ name: 'project', id: DB.projects[0].id }]; render()`);
+  assert.ok(t.els.main.innerHTML.includes('کنترات'));
+  assert.ok(t.els.main.innerHTML.includes('دریافتی متفرقه'));
+});
+
 test('import: cats:[null] does not brick the app', () => {
   const t = boot();
   t.run(`applyBackup(parseBackup('{"v":1,"projects":[],"cats":[null]}'))`);
