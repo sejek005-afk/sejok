@@ -48,14 +48,14 @@ window.updOpen = updOpen; window.updLater = updLater;
 function updBanner() {
   if (!UPD.show) return '';
   return `<div class="card" style="border:2px solid var(--yellow);margin-bottom:12px">
-    <div class="ct"><b>نسخه جدید ایشیم آمده${UPD.name ? ' (' + esc(faDigits(UPD.name)) + ')' : ''}</b></div>
+    <div class="ct"><b>نسخه جدید ایشیمیز آمده${UPD.name ? ' (' + esc(faDigits(UPD.name)) + ')' : ''}</b></div>
     ${UPD.message ? `<div class="mut" style="margin:4px 0">${esc(UPD.message)}</div>` : ''}
     <div class="row" style="gap:8px;margin-top:8px"><button class="btn pri" style="flex:2;margin:0" onclick="updOpen()">به‌روزرسانی از بازار</button><button class="btn" style="flex:1;margin:0" onclick="updLater()">بعداً</button></div></div>`;
 }
 V.update = () => ({
-  title: 'ایشیم',
+  title: 'ایشیمیز',
   logo: true,
-  html: `<div class="card" style="text-align:center;margin-top:24px"><b style="font-size:17px">نسخه جدید ایشیم لازم است</b>
+  html: `<div class="card" style="text-align:center;margin-top:24px"><b style="font-size:17px">نسخه جدید ایشیمیز لازم است</b>
     <p class="mut">${esc(UPD.message || 'این نسخه دیگر با سرور کار نمی‌کند. برای ادامه، برنامه را از بازار به‌روز کنید. اطلاعات شما سر جایش می‌ماند.')}</p>
     <button class="btn pri wide" onclick="updOpen()">به‌روزرسانی از بازار</button></div>`,
 });

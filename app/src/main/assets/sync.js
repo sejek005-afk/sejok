@@ -389,7 +389,7 @@ V.auth = () => {
   // مقدارهای تایپ‌شده نگه داشته می‌شوند تا اگر صفحه دوباره ساخته شد (مثلاً برگشتن به برنامه) پاک نشوند
   const vals = SY_AUTH.vals || (SY_AUTH.vals = {});
   const inp = (id, label, attrs) => `<label class="fld">${label}<input id="${id}" ${attrs || ''} value="${esc(vals[id] != null ? vals[id] : (id === 'au_user' ? (SY.lastUser || '') : id === 'au_url' ? (SY.url || DEFAULT_SERVER) : ''))}" oninput="SY_AUTH.vals[this.id]=this.value"></label>`;
-  let h = `<div style="text-align:center;margin:8px 0 14px"><img src="logo.png" alt="ایشیم" style="width:190px;max-width:60%"></div>
+  let h = `<div style="text-align:center;margin:8px 0 14px"><img src="logo.png" alt="ایشیمیز" style="width:190px;max-width:60%"></div>
   <div class="card">
     <div class="seg" style="display:flex;gap:6px;margin-bottom:12px">
       <button class="btn ${reg ? 'pri' : ''}" style="flex:1;margin:0" onclick="syAuthMode('register')">ثبت‌نام</button>
@@ -405,10 +405,10 @@ V.auth = () => {
     <button class="btn pri wide" ${SY_AUTH.busy ? 'disabled' : ''} onclick="syAuthSubmit()">${SY_AUTH.busy ? 'لطفاً صبر کنید…' : reg ? 'ساخت حساب' : 'ورود'}</button>
     ${reg && syHasLocalData() ? '<div class="mut" style="margin-top:8px">اطلاعاتی که الان روی این گوشی هست، بعد از ثبت‌نام به حساب جدید شما منتقل می‌شود.</div>' : ''}
     <div class="mut" style="margin-top:10px;font-size:12px">برای اولین ورود، اینترنت لازم است. بعد از آن برنامه بدون اینترنت هم کار می‌کند.</div>
-    ${reg ? `<div class="mut" style="margin-top:6px;font-size:12px">با ساخت حساب، <a href="#" onclick="openExt(PRIVACY_URL);return false" style="color:inherit;text-decoration:underline">قوانین و حریم خصوصی</a> ایشیم را می‌پذیرید.</div>` : ''}
+    ${reg ? `<div class="mut" style="margin-top:6px;font-size:12px">با ساخت حساب، <a href="#" onclick="openExt(PRIVACY_URL);return false" style="color:inherit;text-decoration:underline">قوانین و حریم خصوصی</a> ایشیمیز را می‌پذیرید.</div>` : ''}
   </div>
   <div style="text-align:center"><button class="btn" style="background:none;box-shadow:none;font-size:12px;opacity:.7" onclick="SY_AUTH.showUrl=!SY_AUTH.showUrl;render()">تنظیمات سرور</button></div>`;
-  return { title: 'ایشیم', html: h, logo: true };
+  return { title: 'ایشیمیز', html: h, logo: true };
 };
 function syAuthMode(m) { SY_AUTH.mode = m; SY_AUTH.err = ''; render(); }
 window.syAuthMode = syAuthMode;

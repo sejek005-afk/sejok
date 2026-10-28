@@ -648,7 +648,7 @@ V.home = () => {
       <div style="flex:1;min-width:0"><b style="font-size:16px">${esc(c.name)}</b><div class="mut">${faDigits(ps.length)} پروژه · ${faNum(a.meters)} متر کار</div></div>
       <div class="v">${money(a.net, 1)}<small>خالص کل</small></div></div></div>`;
   }
-  return { title: 'ایشیم', html: h, fab: 'catForm()', settings: true, logo: true };
+  return { title: 'ایشیمیز', html: h, fab: 'catForm()', settings: true, logo: true };
 };
 function dayName(s) { return ['شنبه', 'یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنجشنبه', 'جمعه'][(jToJdn(s) + 2) % 7]; }
 
@@ -880,7 +880,7 @@ function personText(kind, id, mode) {
   if (s.adv) L.push(`مساعده: ${f(s.adv)}`);
   L.push(`پرداختی تا این لحظه: ${f(s.paid)}`);
   L.push(s.bal >= 0 ? `مانده طلب شما: ${f(s.bal)}` : `بیش‌پرداخت: ${f(-s.bal)}`);
-  const biz = DB.inv && DB.inv.biz; L.push(biz || 'ایشیم');
+  const biz = DB.inv && DB.inv.biz; L.push(biz || 'ایشیمیز');
   return L.join('\n');
 }
 function msgSheet(kind, id, mode) {
@@ -1039,12 +1039,12 @@ V.settings = () => {
     <label class="btn dark wide">${ic('in')} بازیابی از فایل پشتیبان<input type="file" accept=".json,application/json,text/plain,*/*" style="display:none" onchange="importData(this)"></label></div>
     <div class="card"><div class="kv"><span>دسته‌ها</span><span>${faDigits(DB.cats.length)}</span></div><div class="kv"><span>پروژه‌ها</span><span>${faDigits(n)}</span></div><div class="kv"><span>شاگردها</span><span>${faDigits(w)}</span></div><div class="kv"><span>نصاب‌ها</span><span>${faDigits(DB.installers.length)}</span></div><div class="kv"><span>پیمانکاران</span><span>${faDigits(DB.contractors.length)}</span></div></div>
     <div class="card">${online ? '<div class="mut">برای پاک کردن اطلاعات این گوشی، اول از حساب خارج شوید. (پاک کردن در حالت ورود، اطلاعات را از سرور و گوشی همه کاربران هم پاک می‌کرد.)</div>' : `<button class="btn danger wide" style="margin:0" onclick="askConfirm('همه اطلاعات برنامه پاک شود؟ این کار قابل بازگشت نیست.',()=>askConfirm('واقعاً مطمئن هستید؟',()=>{DB=fix({});save();tab('home')}))">پاک کردن همه اطلاعات</button>`}</div>
-    <div style="text-align:center;margin-top:18px"><img src="logo.png" alt="ایشیم" style="width:150px;opacity:.9"><div class="mut">${appVersion() ? 'نسخه ' + faDigits(appVersion()) : ''}</div></div>`;
+    <div style="text-align:center;margin-top:18px"><img src="logo.png" alt="ایشیمیز" style="width:150px;opacity:.9"><div class="mut">${appVersion() ? 'نسخه ' + faDigits(appVersion()) : ''}</div></div>`;
   return { title: 'تنظیمات', html: h };
 };
 
 function exportData() {
-  const name = `eshim-backup-${todayJ().replace(/\//g, '-')}.json`;
+  const name = `eshimiz-backup-${todayJ().replace(/\//g, '-')}.json`;
   const payload = Object.assign({}, DB);
   if (window.getAsset) payload._assets = { logo: getAsset('logo'), stamp: getAsset('stamp') };
   const json = JSON.stringify(payload);
@@ -1089,7 +1089,7 @@ function importData(input) {
 function exportCorrupt() {
   const raw = DB_CORRUPT && (DB_CORRUPT.key ? localStorage.getItem(DB_CORRUPT.key) : DB_CORRUPT.raw);
   if (!raw) { toast('نسخه خراب پیدا نشد'); return; }
-  const name = `eshim-damaged-${todayJ().replace(/\//g, '-')}.json`;
+  const name = `eshimiz-damaged-${todayJ().replace(/\//g, '-')}.json`;
   if (window.Android && Android.saveFile) { const r = Android.saveFile(name, raw); toast(r && r.indexOf('ok:') === 0 ? 'در پوشه Download ذخیره شد' : 'ذخیره نشد'); return; }
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([raw], { type: 'application/json' })); a.download = name; a.click();
 }
