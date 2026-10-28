@@ -398,6 +398,19 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public int appVersionCode() { return BuildConfig.VERSION_CODE; }
 
+        // ذخیره اطلاعات بزرگ در فایل (Store.java)؛ فراخوانی همزمان از جاوااسکریپت
+        @JavascriptInterface
+        public String storeGet(String name) { return Store.get(getApplicationContext(), name); }
+
+        @JavascriptInterface
+        public boolean storeSet(String name, String value) { return Store.set(getApplicationContext(), name, value); }
+
+        @JavascriptInterface
+        public boolean storeRemove(String name) { return Store.remove(getApplicationContext(), name); }
+
+        @JavascriptInterface
+        public String storeInfo() { return Store.info(getApplicationContext()); }
+
         @JavascriptInterface
         public String deviceName() { return (android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL).trim(); }
 

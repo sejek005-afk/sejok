@@ -11,7 +11,10 @@ let DB = load();
 function fix(d) { return sanitizeDB(d).db; }
 function load() {
   let raw = null;
-  try { raw = localStorage.getItem(KEY); } catch (e) { }
+  try { raw = kvGet(KEY); } catch (e) {
+    // فایل اطلاعات خوانده نشد: برنامه نباید با اطلاعات خالی روی آن ذخیره کند
+    if (e && e.code === 'read') { DB_CORRUPT = { key: null, size: 0, raw: null, readErr: true }; return fix({}); }
+  }
   if (raw == null || raw === '') return fix({});
   try {
     const d = JSON.parse(raw);
@@ -20,7 +23,7 @@ function load() {
   } catch (e) {
     const key = 'db_corrupt_' + Date.now();
     let copied = false;
-    try { localStorage.setItem(key, raw); copied = true; } catch (e2) { }
+    try { kvSet(key, raw); copied = true; } catch (e2) { }
     DB_CORRUPT = { key: copied ? key : null, size: raw.length, raw: copied ? null : raw };
     return fix({});
   }
@@ -29,7 +32,7 @@ function save() {
   invalidate();
   if (DB_CORRUPT) return; // اطلاعات خراب قبلی بدون اجازه کاربر بازنویسی نمی‌شود
   try {
-    localStorage.setItem(KEY, JSON.stringify(DB));
+    kvSet(KEY, JSON.stringify(DB));
     if (SAVE_FAILED) { SAVE_FAILED = false; updateSaveWarn(); }
   } catch (e) { SAVE_FAILED = true; updateSaveWarn(); }
 }
@@ -1020,19 +1023,26 @@ function chartSvg(rows) {
 }
 
 function appVersion() { try { return window.Android && Android.appVersion ? String(Android.appVersion()) : ''; } catch (e) { return ''; } }
-function storageUsage() {
-  let bytes = 0;
-  try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); bytes += (k.length + (localStorage.getItem(k) || '').length) * 2; } } catch (e) { }
-  return bytes;
-}
+function storageUsage() { return kvUsage().used; }
 V.settings = () => {
   const n = DB.projects.length, w = DB.workers.length;
-  const used = storageUsage(), LIMIT = 5 * 1024 * 1024, pct = Math.min(100, used / LIMIT * 100);
+  const U = kvUsage(), used = U.used;
   const mb = x => (Math.round(x / 1024 / 1024 * 10) / 10).toLocaleString('fa-IR');
-  const storage = `<div class="card"><div class="ct"><b>فضای ذخیره‌سازی</b><span class="badge ${pct > 90 ? 'bad' : pct > 70 ? 'y' : 'ok'}">${faDigits(Math.round(pct))}٪</span></div>
+  let storage;
+  if (U.native) {
+    // اطلاعات در فایل گوشی: سقف همان فضای خالی گوشی است
+    const low = U.free > 0 && U.free < 200 * 1024 * 1024;
+    const gb = x => (Math.round(x / 1024 / 1024 / 1024 * 10) / 10).toLocaleString('fa-IR');
+    storage = `<div class="card"><div class="ct"><b>فضای ذخیره‌سازی</b><span class="badge ${low ? 'bad' : 'ok'}">${low ? 'حافظه گوشی کم است' : 'بدون محدودیت'}</span></div>
+    <div class="mut">اطلاعات برنامه: ${mb(used)} مگابایت · فضای خالی گوشی: ${U.free >= 1024 * 1024 * 1024 ? gb(U.free) + ' گیگابایت' : mb(U.free) + ' مگابایت'}</div>
+    ${low ? `<div class="mut" style="color:var(--bad);margin-top:6px">حافظه گوشی رو به پر شدن است. چند فایل یا عکس اضافه را پاک کنید؛ اگر حافظه پر شود، تغییرات جدید ذخیره نمی‌شوند.</div>` : ''}</div>`;
+  } else {
+    const LIMIT = 5 * 1024 * 1024, pct = Math.min(100, used / LIMIT * 100);
+    storage = `<div class="card"><div class="ct"><b>فضای ذخیره‌سازی</b><span class="badge ${pct > 90 ? 'bad' : pct > 70 ? 'y' : 'ok'}">${faDigits(Math.round(pct))}٪</span></div>
     <div class="bar"><i style="width:${pct}%;background:${pct > 90 ? 'var(--bad)' : pct > 70 ? 'var(--yellow)' : 'var(--ok)'}"></i></div>
     <div class="mut">${mb(used)} مگابایت از حدود ${mb(LIMIT)} مگابایت</div>
     ${pct > 70 ? `<div class="mut" style="color:var(--bad);margin-top:6px">فضای برنامه رو به پر شدن است. فایل پشتیبان بگیرید؛ اگر حافظه پر شود، تغییرات جدید ذخیره نمی‌شوند.</div>` : ''}</div>`;
+  }
   const online = !!(window.syncLoggedIn && syncLoggedIn());
   let h = (window.syncCard ? syncCard() : '') + storage + `<div class="card"><b>پشتیبان‌گیری</b><div class="mut" style="margin:4px 0 10px">${online ? 'اطلاعات روی سرور هم ذخیره می‌شود. گرفتن فایل پشتیبان هر چند وقت یک بار باز هم توصیه می‌شود.' : 'اطلاعات فقط روی همین گوشی ذخیره می‌شود. برای جلوگیری از گم شدن اطلاعات (مثلاً هنگام عوض کردن گوشی)، هر چند وقت یک بار فایل پشتیبان بگیرید.'}</div>
     <button class="btn pri wide" onclick="exportData()">${ic('out')} ذخیره فایل پشتیبان</button>
@@ -1087,7 +1097,8 @@ function importData(input) {
   input.value = '';
 }
 function exportCorrupt() {
-  const raw = DB_CORRUPT && (DB_CORRUPT.key ? localStorage.getItem(DB_CORRUPT.key) : DB_CORRUPT.raw);
+  let raw = null;
+  try { raw = DB_CORRUPT && (DB_CORRUPT.key ? kvGet(DB_CORRUPT.key) : DB_CORRUPT.raw); } catch (e) { }
   if (!raw) { toast('نسخه خراب پیدا نشد'); return; }
   const name = `eshimiz-damaged-${todayJ().replace(/\//g, '-')}.json`;
   if (window.Android && Android.saveFile) { const r = Android.saveFile(name, raw); toast(r && r.indexOf('ok:') === 0 ? 'در پوشه Download ذخیره شد' : 'ذخیره نشد'); return; }
@@ -1099,7 +1110,12 @@ function startFresh() {
   });
 }
 const RESTORE_BTN = `<label class="btn pri wide">${ic('in')} بازیابی از فایل پشتیبان<input type="file" accept=".json,application/json,text/plain,*/*" style="display:none" onchange="importData(this)"></label>`;
-V.corrupt = () => ({
+V.corrupt = () => DB_CORRUPT && DB_CORRUPT.readErr ? ({
+  title: 'اطلاعات خوانده نشد',
+  html: `<div class="card"><b style="color:var(--bad)">فایل اطلاعات برنامه این بار خوانده نشد.</b>
+    <p class="mut">اطلاعات شما پاک نشده و هیچ تغییری روی آن ذخیره نمی‌شود. برنامه را کامل ببندید و دوباره باز کنید. اگر باز هم این صفحه آمد، گوشی را یک بار خاموش و روشن کنید و ببینید حافظه گوشی پر نباشد. اطلاعات روی سرور هم سالم است.</p>
+    <button class="btn pri wide" onclick="location.reload()">دوباره امتحان کن</button></div>`,
+}) : ({
   title: 'اطلاعات قابل خواندن نیست',
   html: `<div class="card"><b style="color:var(--bad)">اطلاعات ذخیره‌شده برنامه خراب است و خوانده نشد.</b>
     <p class="mut">برای جلوگیری از پاک شدن، هیچ تغییری روی آن ذخیره نمی‌شود تا شما تصمیم بگیرید. یک نسخه از آن هم جداگانه نگه داشته شده است (${faDigits(Math.round((DB_CORRUPT.size || 0) / 1024))} کیلوبایت).</p>

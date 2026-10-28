@@ -12,17 +12,20 @@ const DEFAULT_SERVER = 'https://eshim.ir/api/';
 const PRIVACY_URL = 'https://eshim.ir/privacy.html';
 const OLD_SERVERS = ['https://1496118093.cloudylink.com/~h438354/api/'];
 let SY = syLoad();
-if (SY.url && OLD_SERVERS.includes(SY.url)) { SY.url = DEFAULT_SERVER; try { localStorage.setItem(SYNC_KEY, JSON.stringify(SY)); } catch (e) { } }
+if (SY.url && OLD_SERVERS.includes(SY.url)) { SY.url = DEFAULT_SERVER; sySave(); }
 let syBusy = false, syAgain = false, syTimer = null, syApplying = false, syErr = '', syRenderLater = false;
 
 function syLoad() {
   try {
-    const s = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null');
+    const s = JSON.parse(kvGet(SYNC_KEY) || 'null');
     if (s && typeof s === 'object' && !Array.isArray(s)) { if (!s.snap || typeof s.snap !== 'object') s.snap = {}; return s; }
-  } catch (e) { }
+  } catch (e) {
+    // فایل همگام‌سازی خوانده نشد: برنامه متوقف می‌شود تا با وضعیت خالی روی آن ذخیره نکند
+    if (e && e.code === 'read' && !DB_CORRUPT) DB_CORRUPT = { key: null, size: 0, raw: null, readErr: true };
+  }
   return { snap: {} };
 }
-function sySave() { try { localStorage.setItem(SYNC_KEY, JSON.stringify(SY)); return true; } catch (e) { return false; } }
+function sySave() { if (DB_CORRUPT && DB_CORRUPT.readErr) return false; try { kvSet(SYNC_KEY, JSON.stringify(SY)); return true; } catch (e) { return false; } }
 function syncLoggedIn() { return !!(SY.token && SY.url && SY.deviceId); }
 window.syncLoggedIn = syncLoggedIn;
 

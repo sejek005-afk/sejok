@@ -8,9 +8,9 @@ const INV_DEF = {
 const UNITS = ['متر مربع', 'متر طول', 'متر', 'عدد', 'شاخه', 'برگ', 'کیلوگرم', 'سرویس', 'روز', 'مقطوع'];
 // لوگو و مهر جدا از اطلاعات اصلی ذخیره می‌شوند تا فایل اصلی سنگین نشود
 const ASSET_KEY = { logo: 'rawano_logo', stamp: 'rawano_stamp' };
-function getAsset(k) { try { return localStorage.getItem(ASSET_KEY[k]) || ''; } catch (e) { return ''; } }
+function getAsset(k) { try { return kvGet(ASSET_KEY[k]) || ''; } catch (e) { return ''; } }
 function setAsset(k, v) {
-  try { if (v) localStorage.setItem(ASSET_KEY[k], v); else localStorage.removeItem(ASSET_KEY[k]); return true; } catch (e) { return false; }
+  try { if (v) kvSet(ASSET_KEY[k], v); else kvRemove(ASSET_KEY[k]); return true; } catch (e) { return false; }
 }
 // انتقال لوگو/مهر از داخل اطلاعات اصلی (نسخه‌های قبلی یا فایل پشتیبان) به کلید جداگانه
 function migrateAssets(force) {
