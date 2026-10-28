@@ -9,4 +9,7 @@ deployment:
     - /bin/cp server/index.php server/lib.php server/backup.php server/version.json server/.htaccess $DEPLOYPATH
     - /bin/sh -c "test -f ${DEPLOYPATH}config.php || /bin/cp server/install.php $DEPLOYPATH"
     - /bin/sh -c "test -f ${DEPLOYPATH}config.php && /bin/rm -f ${DEPLOYPATH}install.php; true"
-    - /bin/cp web/index.html web/privacy.html web/icon-512.png web/favicon-64.png web/Vazirmatn.woff2 $WEBPATH
+    - /bin/mkdir -p ${WEBPATH}en ${WEBPATH}img
+    - /bin/cp web/index.html web/privacy.html web/icon-512.png web/favicon-64.png web/Vazirmatn.woff2 web/Lalezar.woff $WEBPATH
+    - /bin/cp web/en/index.html web/en/privacy.html ${WEBPATH}en/
+    - /bin/cp web/img/1-home.webp web/img/2-project.webp web/img/3-workers.webp web/img/4-invoice.webp web/img/5-chart.webp web/img/6-notes.webp ${WEBPATH}img/
