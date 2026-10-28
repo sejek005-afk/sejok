@@ -245,3 +245,11 @@ table.mt tr.tot td { font-weight: 800; border-top: 2px solid var(--graphite); bo
 #savewarn .btn { margin-top: 6px; display: block; }
 .bar { height: 8px; background: var(--paper); border-radius: 4px; overflow: hidden; margin: 8px 0 4px; }
 .bar i { display: block; height: 100%; border-radius: 4px; }
+
+/* پشتیبانی: گفتگو */
+.tk-msg { max-width: 86%; margin: 8px 0; padding: 9px 12px 6px; border-radius: 14px; background: var(--card); border: 1px solid var(--line); }
+.tk-msg.me { margin-left: auto; background: var(--yellow-soft); border-color: #F1DE9A; border-bottom-right-radius: 4px; }
+.tk-msg.them { margin-right: auto; border-bottom-left-radius: 4px; }
+.tk-who { font-size: 12px; font-weight: 700; color: var(--mut); }
+.tk-body { white-space: pre-wrap; word-break: break-word; margin: 2px 0; }
+.tk-at { font-size: 11px; color: var(--mut); text-align: left; }

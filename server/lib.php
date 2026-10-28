@@ -3,7 +3,9 @@
 declare(strict_types=1);
 
 const API_VERSION = 2;
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
+const SUPPORT_EMAIL = 'info@eshim.ir';
+const TICKET_KINDS = ['suggest' => 'پیشنهاد', 'bug' => 'گزارش مشکل', 'question' => 'سؤال'];
 const TOKEN_DAYS = 180;
 const PAGE_LIMIT = 2000;
 const MAX_REQUEST_BYTES = 8 * 1024 * 1024;
@@ -126,6 +128,11 @@ function migrate_schema(PDO $pdo): void {
             $pdo->exec('ALTER TABLE rw_records2 RENAME TO rw_records');
             $pdo->exec('CREATE INDEX rw_records_wsrev ON rw_records (ws_id, rev)');
         }
+        // نسخه ۳: تیکت پشتیبانی و پیشنهادها
+        $pdo->exec("CREATE TABLE IF NOT EXISTS rw_tickets (id $auto, user_id INT NOT NULL, kind VARCHAR(10) NOT NULL DEFAULT 'question', subject VARCHAR(150) NOT NULL DEFAULT '', status VARCHAR(10) NOT NULL DEFAULT 'open', created BIGINT NOT NULL, updated BIGINT NOT NULL, user_seen BIGINT NOT NULL DEFAULT 0, admin_seen BIGINT NOT NULL DEFAULT 0, app VARCHAR(40) NOT NULL DEFAULT '', device VARCHAR(100) NOT NULL DEFAULT '')$engine");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS rw_ticket_msgs (id $auto, ticket_id INT NOT NULL, user_id INT NOT NULL, is_admin TINYINT NOT NULL DEFAULT 0, body $text, created BIGINT NOT NULL)$engine");
+        try { $pdo->exec('CREATE INDEX rw_tickets_user ON rw_tickets (user_id, updated)'); } catch (PDOException $e) { }
+        try { $pdo->exec('CREATE INDEX rw_ticket_msgs_t ON rw_ticket_msgs (ticket_id, id)'); } catch (PDOException $e) { }
         meta_set($pdo, 'schema', (string) SCHEMA_VERSION);
     } finally {
         if ($sqlite) { try { $pdo->exec('COMMIT'); } catch (PDOException $e) { } }
@@ -283,4 +290,40 @@ function upsert_sql(PDO $pdo): string {
     return is_sqlite($pdo)
         ? 'INSERT INTO rw_records (ws_id, coll, rid, data, rev, deleted, updated_by, updated_dev, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(ws_id, coll, rid) DO UPDATE SET data = excluded.data, rev = excluded.rev, deleted = excluded.deleted, updated_by = excluded.updated_by, updated_dev = excluded.updated_dev, updated_at = excluded.updated_at'
         : 'INSERT INTO rw_records (ws_id, coll, rid, data, rev, deleted, updated_by, updated_dev, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE data = VALUES(data), rev = VALUES(rev), deleted = VALUES(deleted), updated_by = VALUES(updated_by), updated_dev = VALUES(updated_dev), updated_at = VALUES(updated_at)';
+}
+
+// ---------- پشتیبانی ----------
+// فرستادن ایمیل اطلاع‌رسانی به صندوق پشتیبانی؛ شکست ایمیل کار اصلی را خراب نمی‌کند
+function support_mail(array $cfg, string $subject, string $body, string $replyTo = ''): bool {
+    $to = (string) ($cfg['support_email'] ?? SUPPORT_EMAIL);
+    if ($to === '' || !function_exists('mail')) return false;
+    $from = (string) ($cfg['mail_from'] ?? 'no-reply@eshim.ir');
+    $headers = "From: =?UTF-8?B?" . base64_encode('ایشیمیز') . "?= <$from>\r\n"
+        . "MIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n";
+    if ($replyTo !== '' && filter_var($replyTo, FILTER_VALIDATE_EMAIL)) $headers .= "Reply-To: $replyTo\r\n";
+    $subj = '=?UTF-8?B?' . base64_encode($subject) . '?=';
+    try { return @mail($to, $subj, chunk_split(base64_encode($body)), $headers, '-f' . $from); } catch (Throwable $e) { return false; }
+}
+function ticket_public(array $t): array {
+    return [
+        'id' => (int) $t['id'], 'kind' => $t['kind'], 'subject' => $t['subject'], 'status' => $t['status'],
+        'created' => (int) $t['created'], 'updated' => (int) $t['updated'],
+        'userSeen' => (int) $t['user_seen'], 'adminSeen' => (int) $t['admin_seen'],
+        'user' => isset($t['username']) ? ['id' => (int) $t['user_id'], 'username' => $t['username'], 'name' => $t['name']] : null,
+        'app' => $t['app'] ?? '', 'device' => $t['device'] ?? '',
+    ];
+}
+function load_ticket(PDO $pdo, int $id, array $u): array {
+    $st = $pdo->prepare('SELECT t.*, u.username, u.name FROM rw_tickets t JOIN rw_users u ON u.id = t.user_id WHERE t.id = ?');
+    $st->execute([$id]);
+    $t = $st->fetch();
+    if (!$t || ((int) $t['user_id'] !== $u['id'] && $u['role'] !== 'admin')) fail(404, 'not_found', 'تیکت پیدا نشد.');
+    return $t;
+}
+function ticket_count_today(PDO $pdo, int $userId, bool $tickets): int {
+    $since = now_ms() - 86400000;
+    $st = $pdo->prepare($tickets ? 'SELECT COUNT(*) FROM rw_tickets WHERE user_id = ? AND created > ?'
+        : 'SELECT COUNT(*) FROM rw_ticket_msgs WHERE user_id = ? AND is_admin = 0 AND created > ?');
+    $st->execute([$userId, $since]);
+    return (int) $st->fetchColumn();
 }

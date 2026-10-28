@@ -3,6 +3,7 @@
 // مسیرها با ?r=نام:
 //   ping, register, login, logout, me, change_password, delete_account, use_ws, sync,
 //   share_list, share_add, share_remove, users, user_save (دو مورد آخر فقط مدیر سرور)
+//   ticket_create, ticket_list, ticket_get, ticket_reply, ticket_close (پشتیبانی و پیشنهادها؛ هر تیکت به ایمیل پشتیبانی هم می‌رود)
 // هر کاربر یک «حساب» (workspace) دارد؛ صاحب حساب می‌تواند با نام کاربری (شماره موبایل)
 // کاربر دیگری را به حسابش اضافه کند تا هر دو همان اطلاعات را ببینند.
 declare(strict_types=1);
@@ -148,6 +149,8 @@ switch ($route) {
                 $pdo->prepare('DELETE FROM rw_members WHERE ws_id = ?')->execute([$w['id']]);
                 $pdo->prepare('DELETE FROM rw_workspaces WHERE id = ?')->execute([$w['id']]);
             }
+            $pdo->prepare('DELETE FROM rw_ticket_msgs WHERE ticket_id IN (SELECT id FROM rw_tickets WHERE user_id = ?)')->execute([$u['id']]);
+            $pdo->prepare('DELETE FROM rw_tickets WHERE user_id = ?')->execute([$u['id']]);
             $pdo->prepare('DELETE FROM rw_members WHERE user_id = ?')->execute([$u['id']]);
             $pdo->prepare('DELETE FROM rw_tokens WHERE user_id = ?')->execute([$u['id']]);
             $pdo->prepare('DELETE FROM rw_devices WHERE user_id = ?')->execute([$u['id']]);
@@ -239,6 +242,75 @@ switch ($route) {
     }
 
     // ---------- همگام‌سازی ----------
+    // ---------- پشتیبانی و پیشنهادها ----------
+    case 'ticket_create': {
+        $u = auth($pdo);
+        $kind = (string) ($in['kind'] ?? '');
+        if (!isset(TICKET_KINDS[$kind])) $kind = 'question';
+        $subject = mb_substr(trim(preg_replace('/\s+/u', ' ', (string) ($in['subject'] ?? ''))), 0, 150);
+        $body = mb_substr(trim((string) ($in['body'] ?? '')), 0, 5000);
+        if ($subject === '' || $body === '') fail(400, 'empty', 'موضوع و متن را بنویسید.');
+        if (ticket_count_today($pdo, $u['id'], true) >= 10) fail(429, 'too_many', 'امروز تیکت زیادی فرستاده‌اید؛ فردا دوباره امتحان کنید.');
+        $now = now_ms();
+        $app = mb_substr(trim((string) ($in['app'] ?? '')), 0, 40);
+        $device = mb_substr(trim((string) ($in['device'] ?? '')), 0, 100);
+        $pdo->prepare('INSERT INTO rw_tickets (user_id, kind, subject, status, created, updated, user_seen, admin_seen, app, device) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)')
+            ->execute([$u['id'], $kind, $subject, 'open', $now, $now, $now, $app, $device]);
+        $id = (int) $pdo->lastInsertId();
+        $pdo->prepare('INSERT INTO rw_ticket_msgs (ticket_id, user_id, is_admin, body, created) VALUES (?, ?, 0, ?, ?)')->execute([$id, $u['id'], $body, $now]);
+        $mailed = support_mail($cfg, '[ایشیمیز #' . $id . '] ' . TICKET_KINDS[$kind] . ': ' . $subject,
+            "تیکت جدید در ایشیمیز\n\nشماره تیکت: $id\nنوع: " . TICKET_KINDS[$kind] . "\nموضوع: $subject\n\nفرستنده: {$u['name']} ({$u['username']})\nنسخه برنامه: $app\nگوشی: $device\n\n----------\n$body\n----------\n\nبرای جواب دادن، با حساب مدیر در برنامه: تنظیمات ← پشتیبانی و پیشنهادها");
+        json_out(['ok' => true, 'id' => $id, 'mailed' => $mailed]);
+    }
+
+    case 'ticket_list': {
+        $u = auth($pdo);
+        $all = $u['role'] === 'admin' && !empty($in['all']);
+        $sql = 'SELECT t.*, u.username, u.name FROM rw_tickets t JOIN rw_users u ON u.id = t.user_id' . ($all ? '' : ' WHERE t.user_id = ?') . ' ORDER BY t.updated DESC LIMIT 300';
+        $st = $pdo->prepare($sql);
+        $st->execute($all ? [] : [$u['id']]);
+        json_out(['ok' => true, 'tickets' => array_map('ticket_public', $st->fetchAll()), 'admin' => $u['role'] === 'admin']);
+    }
+
+    case 'ticket_get': {
+        $u = auth($pdo);
+        $t = load_ticket($pdo, (int) ($in['id'] ?? 0), $u);
+        $st = $pdo->prepare('SELECT id, is_admin, body, created FROM rw_ticket_msgs WHERE ticket_id = ? ORDER BY id');
+        $st->execute([$t['id']]);
+        $msgs = array_map(fn($m) => ['id' => (int) $m['id'], 'admin' => (bool) (int) $m['is_admin'], 'body' => $m['body'], 'created' => (int) $m['created']], $st->fetchAll());
+        // دیده شدن: صاحب تیکت یا مدیر
+        $now = now_ms();
+        if ((int) $t['user_id'] === $u['id']) { $pdo->prepare('UPDATE rw_tickets SET user_seen = ? WHERE id = ?')->execute([$now, $t['id']]); $t['user_seen'] = $now; }
+        else { $pdo->prepare('UPDATE rw_tickets SET admin_seen = ? WHERE id = ?')->execute([$now, $t['id']]); $t['admin_seen'] = $now; }
+        json_out(['ok' => true, 'ticket' => ticket_public($t), 'messages' => $msgs]);
+    }
+
+    case 'ticket_reply': {
+        $u = auth($pdo);
+        $t = load_ticket($pdo, (int) ($in['id'] ?? 0), $u);
+        $body = mb_substr(trim((string) ($in['body'] ?? '')), 0, 5000);
+        if ($body === '') fail(400, 'empty', 'متن پیام را بنویسید.');
+        $isOwner = (int) $t['user_id'] === $u['id'];
+        $asAdmin = !$isOwner && $u['role'] === 'admin';
+        if ($isOwner) {
+            if (ticket_count_today($pdo, $u['id'], false) >= 40) fail(429, 'too_many', 'امروز پیام زیادی فرستاده‌اید؛ فردا دوباره امتحان کنید.');
+        }
+        $now = now_ms();
+        $pdo->prepare('INSERT INTO rw_ticket_msgs (ticket_id, user_id, is_admin, body, created) VALUES (?, ?, ?, ?, ?)')->execute([$t['id'], $u['id'], $asAdmin ? 1 : 0, $body, $now]);
+        if ($asAdmin) $pdo->prepare("UPDATE rw_tickets SET status = 'answered', updated = ?, admin_seen = ? WHERE id = ?")->execute([$now, $now, $t['id']]);
+        else $pdo->prepare("UPDATE rw_tickets SET status = 'open', updated = ?, user_seen = ? WHERE id = ?")->execute([$now, $now, $t['id']]);
+        if (!$asAdmin) support_mail($cfg, '[ایشیمیز #' . $t['id'] . '] پاسخ کاربر: ' . $t['subject'],
+            "پیام تازه در تیکت #{$t['id']}\nموضوع: {$t['subject']}\nفرستنده: {$t['name']} ({$t['username']})\n\n----------\n$body\n----------");
+        json_out(['ok' => true]);
+    }
+
+    case 'ticket_close': {
+        $u = auth($pdo);
+        $t = load_ticket($pdo, (int) ($in['id'] ?? 0), $u);
+        $pdo->prepare("UPDATE rw_tickets SET status = 'closed', updated = ? WHERE id = ?")->execute([now_ms(), $t['id']]);
+        json_out(['ok' => true]);
+    }
+
     case 'sync': {
         $u = auth($pdo);
         $ws = (int) ($in['ws'] ?? 0);

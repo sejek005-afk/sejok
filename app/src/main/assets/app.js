@@ -1120,7 +1120,7 @@ function renderError(e) {
 
 // ===================== رندر =====================
 const NAV = [['home', 'site', 'پروژه‌ها'], ['workers', 'helmet', 'شاگردها'], ['installers', 'ruler', 'نصاب‌ها'], ['contractors', 'wallet', 'پیمانکاران'], ['invoices', 'receipt', 'فاکتور'], ['notes', 'bell', 'یادداشت'], ['chart', 'chart', 'نمودار']];
-const ROOT = { home: 'home', cat: 'home', project: 'home', settings: 'home', workers: 'workers', worker: 'workers', attendance: 'workers', installers: 'installers', installer: 'installers', contractors: 'contractors', contractor: 'contractors', chart: 'chart', invoices: 'invoices', invoice: 'invoices', invPreview: 'invoices', invSettings: 'invoices', notes: 'notes', stmt: 'home', stmtPreview: 'home', users: 'home' };
+const ROOT = { home: 'home', cat: 'home', project: 'home', settings: 'home', workers: 'workers', worker: 'workers', attendance: 'workers', installers: 'installers', installer: 'installers', contractors: 'contractors', contractor: 'contractors', chart: 'chart', invoices: 'invoices', invoice: 'invoices', invPreview: 'invoices', invSettings: 'invoices', notes: 'notes', stmt: 'home', stmtPreview: 'home', users: 'home', support: 'home', ticket: 'home' };
 function navBadge(t) { const f = window.NAV_BADGE && window.NAV_BADGE[t]; const n = f ? f() : 0; return n ? `<i class="nb">${faDigits(n > 9 ? '9+' : n)}</i>` : ''; }
 window.openTab = n => { closeModal(); tab(n); };
 function render() {
