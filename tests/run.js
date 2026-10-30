@@ -154,6 +154,24 @@ test('project types (تیپ): 1000 m with type A 100 m @500 and type B 300 m @80
   assert.ok(r.partId && r.html);
 });
 
+test('receipts and payments can be tied to a project without changing its profit', () => {
+  const t = boot();
+  const r = t.run(`(() => {
+    const c = { id: nid(), name: 'ک' }; DB.cats.push(c);
+    const p = { id: nid(), catId: c.id, name: 'پ', type: 'mat', area: 100, price: 1000, created: '1405/08/01' }; DB.projects.push(p);
+    const k = { id: nid(), first: 'رضا', last: '', phone: '' }; DB.contractors.push(k);
+    DB.progress.push({ id: nid(), projectId: p.id, date: '1405/08/02', meters: 10, rate: 0, partId: null, installerId: null, instMeters: 0, instRate: 0, note: '' });
+    save();
+    const net0 = agg(ALL, new Set([p.id])).net;
+    DB.tx.push({ id: nid(), type: 'in', sub: '', amount: 5000, date: '1405/08/02', note: '', workerId: null, installerId: null, projectId: p.id, contractorId: k.id }); save();
+    const tx = sanitizeDB(JSON.parse(JSON.stringify(DB))).db.tx[0];
+    stack = [{ name: 'project', id: p.id }]; render();
+    return { pid: tx.projectId, type: tx.type, net: agg(ALL, new Set([p.id])).net === net0, html: document.getElementById('main').innerHTML.includes('دریافتی از پیمانکار') };
+  })()`);
+  eq(r, { pid: r.pid, type: 'in', net: true, html: true });
+  assert.ok(r.pid > 0);
+});
+
 test('contractor partnership splits profit; payment to contractor reduces partner share', () => {
   const t = boot();
   const r = t.run(`(() => {

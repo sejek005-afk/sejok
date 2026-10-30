@@ -692,7 +692,7 @@ function txForm(id, preset) {
   const ps = preset || {};
   const v = k => t ? t[k] : (ps[k] != null ? ps[k] : '');
   const fields = [];
-  if (!ps.type || t) fields.push({ k: 'type', label: 'نوع', type: 'select', opts: (ps.contractorId || (t && t.contractorId) ? [['in', 'دریافتی (پول دریافت‌شده)']] : []).concat([['wpay', 'واریز به شاگرد'], ['ipay', 'پرداخت به نصاب'], ['extra', 'هزینه مازاد پروژه'], ['cpay', 'واریز به حساب پیمانکار'], ['misc', 'دریافتی متفرقه پروژه']]), value: v('type') || (ps.contractorId ? 'in' : 'wpay') });
+  if (!ps.type || t) fields.push({ k: 'type', label: 'نوع', type: 'select', opts: (ps.contractorId || (t && t.contractorId) ? [['in', 'دریافتی (پول دریافت‌شده)']] : []).concat([['wpay', 'واریز به شاگرد'], ['ipay', 'پرداخت به نصاب'], ['extra', 'هزینه مازاد پروژه'], ['cpay', 'واریز به حساب پیمانکار'], ['misc', 'دریافتی متفرقه پروژه']]), value: v('type') || ps.defType || (ps.contractorId ? 'in' : 'wpay') });
   const T = o => o.type || ps.type;
   fields.push(
     { k: 'amount', label: 'مبلغ (تومان)', type: 'money', req: true, value: v('amount') },
@@ -700,18 +700,21 @@ function txForm(id, preset) {
     { k: 'workerId', label: 'شاگرد', type: 'select', numeric: true, opts: workerOpts(), value: v('workerId'), when: o => T(o) === 'wpay' },
     { k: 'installerId', label: 'نصاب', type: 'select', numeric: true, opts: instOpts(), value: v('installerId'), when: o => T(o) === 'ipay' },
     { k: 'projectId', label: 'پروژه', type: 'select', numeric: true, opts: projOpts(), value: v('projectId'), when: o => T(o) === 'extra' || T(o) === 'misc' },
+    // دریافتی و پرداخت‌ها: پروژه اختیاری، فقط برای اینکه معلوم باشد پول مال کدام کار است (در حساب سود پروژه اثری ندارد)
+    { k: 'forProject', label: 'برای کدام پروژه؟ (اختیاری)', type: 'select', numeric: true, opts: projOpts('— بدون پروژه —'), value: v('projectId'), when: o => T(o) !== 'extra' && T(o) !== 'misc' },
     { k: 'contractorId', label: 'از طرف پیمانکار', type: 'select', numeric: true, opts: contrOpts('— بدون پیمانکار —'), value: v('contractorId'), when: o => T(o) !== 'in' && T(o) !== 'cpay' },
     { k: 'cpayTo', label: 'به حساب پیمانکار', type: 'select', numeric: true, opts: contrOpts(), value: v('contractorId'), when: o => T(o) === 'cpay',
       hint: 'پولی که به خود پیمانکار (یا شریک) برگردانده یا واریز شده؛ در شراکت از سهم او کم می‌شود.' },
     { k: 'note', label: 'توضیحات', type: 'textarea', value: v('note'), hint: ps.type === 'misc' ? 'مثلاً: فروش ضایعات، کار اضافه، دستمزد جابه‌جایی' : '' },
   );
-  const title = t ? 'ویرایش ' + txLabel(t) : (ps.type ? TXT[ps.type] + ' جدید' : 'تراکنش جدید');
+  const title = t ? 'ویرایش ' + txLabel(t) : (ps.type ? TXT[ps.type] + ' جدید' : ps.defType ? 'خرج‌کرد جدید' : 'تراکنش جدید');
   openForm(title, fields, o => {
     const type = o.type || ps.type;
     const rec = { type, amount: o.amount, date: o.date, note: o.note, workerId: null, installerId: null, projectId: null, contractorId: null };
     if (type === 'wpay') { if (!o.workerId) { toast('شاگرد را انتخاب کنید'); return false; } rec.workerId = o.workerId; }
     if (type === 'ipay') { if (!o.installerId) { toast('نصاب را انتخاب کنید'); return false; } rec.installerId = o.installerId; }
     if (type === 'extra' || type === 'misc') { if (!o.projectId) { toast('پروژه را انتخاب کنید'); return false; } rec.projectId = o.projectId; }
+    else rec.projectId = o.forProject || null;
     rec.contractorId = type === 'in' ? (ps.contractorId || (t && t.contractorId) || null) : type === 'cpay' ? (o.cpayTo || null) : (o.contractorId || null);
     if (type === 'cpay' && !rec.contractorId) { toast('پیمانکار را انتخاب کنید'); return false; }
     if (type === 'in' && !rec.contractorId) { toast('دریافتی فقط برای پیمانکار ثبت می‌شود'); return false; }
@@ -832,6 +835,7 @@ function txRow(t, show) {
   const parts = [showDate(t.date)];
   if (show !== 'contr' && t.contractorId) parts.push((t.type === 'cpay' ? 'به حساب: ' : 'پیمانکار: ') + cname(t.contractorId));
   if (show !== 'target' && who) parts.push(who);
+  if (show !== 'target' && show !== 'proj' && t.projectId && t.type !== 'extra' && t.type !== 'misc') parts.push('پروژه: ' + pname(t.projectId));
   const inc = t.type === 'in' || t.type === 'misc';
   const sign = inc ? '+' : '−';
   return `<div class="tx" onclick="txForm(${t.id})"><span class="dot ${inc ? 'in' : 'out'}">${ic(inc ? 'in' : 'out')}</span><div class="d"><div>${txLabel(t)}${t.note ? ' — ' + esc(t.note) : ''}</div><div class="mut">${esc(parts.join(' · '))}</div></div>
@@ -899,6 +903,7 @@ V.project = r => {
       ${tape(pct)}<div class="mut">از متراژ کل ${faNum(p.area || 0)} متر مربع</div></div>`;
     h += `<div class="card">${breakdown(a, p)}</div>`;
     if (p.type !== 'contract') h += partsCard(p);
+    h += projMoneyCard(p);
     if (window.projAccountCard) h += projAccountCard(p);
     h += `<div class="card"><div class="ct"><b>اطلاعات پروژه</b><button class="btn sm" onclick="projectForm(${p.id})">ویرایش</button></div>
       ${p.address ? `<div class="kv"><span>آدرس</span><span>${esc(p.address)}</span></div>` : ''}
@@ -956,6 +961,17 @@ V.project = r => {
   }
   return { title: p.name, html: h, fab, edit: `projectForm(${p.id})` };
 };
+
+// دریافتی‌ها و پرداخت‌هایی که برای این پروژه ثبت شده (فقط نمایش؛ سود پروژه از کارکرد حساب می‌شود)
+function projMoneyCard(p) {
+  const xs = DB.tx.filter(t => t.projectId === p.id && t.type !== 'extra' && t.type !== 'misc').sort(byDateDesc);
+  if (!xs.length) return '';
+  const s = ty => sum(xs.filter(t => t.type === ty), t => t.amount);
+  const rows = [['in', 'دریافتی از پیمانکار'], ['wpay', 'واریز به شاگردها'], ['ipay', 'پرداخت به نصاب‌ها'], ['cpay', 'واریز به حساب پیمانکار']]
+    .filter(r => s(r[0])).map(r => `<div class="kv"><span>${r[1]}</span><span>${money(s(r[0]))}</span></div>`).join('');
+  return `<div class="card"><b>دریافتی و پرداخت‌های این پروژه</b>${rows}
+    <details style="margin-top:6px"><summary class="mut" style="cursor:pointer">فهرست (${faDigits(xs.length)} مورد)</summary>${xs.slice(0, 50).map(t => txRow(t, 'proj')).join('')}</details></div>`;
+}
 
 function attRow(w, date, withProject) {
   const a = DB.att[w.id + '|' + date];
@@ -1206,7 +1222,7 @@ V.contractor = r => {
       <div class="kv total"><span>${s.partnerDue >= 0 ? 'مانده سهم شریک (باید به او بدهید)' : 'بیشتر از سهمش واریز شده'}</span><span>${money(Math.abs(s.partnerDue), 1)}</span></div>
       <div class="mut" style="margin-top:6px">سود = دریافتی‌ها − (واریز به شاگرد، نصاب و هزینه‌های مازاد). «واریز به حساب پیمانکار» از سهم شریک کم می‌شود.</div></div>`;
   }
-  h += `<div class="row" style="margin-bottom:12px"><button class="btn pri" style="flex:1" onclick="txForm(null,{contractorId:${c.id},type:'in'})">${ic('in')} ثبت دریافتی</button><button class="btn dark" style="flex:1" onclick="txForm(null,{contractorId:${c.id}})">${ic('out')} ثبت خرج‌کرد</button></div>`;
+  h += `<div class="row" style="margin-bottom:12px"><button class="btn pri" style="flex:1" onclick="txForm(null,{contractorId:${c.id},type:'in'})">${ic('in')} ثبت دریافتی</button><button class="btn dark" style="flex:1" onclick="txForm(null,{contractorId:${c.id},defType:'wpay'})">${ic('out')} ثبت خرج‌کرد</button></div>`;
   const txs = s.txs.slice().sort(byDateDesc);
   const pg = pager(r, txs.length);
   h += `<div class="card">${txs.length ? txs.slice(0, pg.lim).map(t => txRow(t, 'contr')).join('') : '<div class="mut">تراکنشی ثبت نشده</div>'}</div>${pg.btn}`;
