@@ -48,14 +48,16 @@
   // سابقه دستمزد شاگرد / قیمت پروژه: از تاریخ from (خالی یعنی از ابتدا)
   const WAGE = { from: 'dateOpt', wage: 'num' };
   const PRICE = { from: 'dateOpt', price: 'num' };
+  // تیپ / قسمت پروژه: بخشی از متراژ کل با قیمت هر متر خودش
+  const PART = { id: 'id', name: 'str', area: 'num', price: 'num' };
   const SITEM = { id: 'id', title: 'str', desc: 'str', unit: 'str', price: 'num', qty: 'num', auto: 'bool' };
   const SCHEMA = {
     cats: { id: 'id', name: 'str' },
-    projects: { id: 'id', catId: 'ref', name: 'str', address: 'str', type: ['mat', 'labor', 'contract'], area: 'num', price: 'num', laborPrice: 'num', contract: 'num', material: 'num', created: 'dateOpt', prices: { arr: PRICE } },
+    projects: { id: 'id', catId: 'ref', name: 'str', address: 'str', type: ['mat', 'labor', 'contract'], area: 'num', price: 'num', laborPrice: 'num', contract: 'num', material: 'num', created: 'dateOpt', prices: { arr: PRICE }, parts: { arr: PART } },
     workers: { id: 'id', first: 'str', last: 'str', address: 'str', phone: 'str', wage: 'num', projectId: 'refN', active: 'bool', fillFrom: 'intN', wages: { arr: WAGE } },
     installers: { id: 'id', first: 'str', last: 'str', address: 'str', phone: 'str', rate: 'num' },
     contractors: { id: 'id', first: 'str', last: 'str', phone: 'str', partner: 'bool', share: 'num' },
-    progress: { id: 'id', projectId: 'ref', date: 'date', meters: 'num', installerId: 'refN', instMeters: 'num', instRate: 'num', rate: 'num', note: 'str' },
+    progress: { id: 'id', projectId: 'ref', date: 'date', meters: 'num', installerId: 'refN', instMeters: 'num', instRate: 'num', rate: 'num', partId: 'refN', note: 'str' },
     tx: { id: 'id', type: ['in', 'wpay', 'ipay', 'extra', 'misc', 'cpay'], sub: ['', 'advance', 'settle'], amount: 'num', date: 'date', note: 'str', workerId: 'refN', installerId: 'refN', projectId: 'refN', contractorId: 'refN' },
     adj: { id: 'id', who: ['w', 'i'], pid: 'ref', type: ['bonus', 'fine'], amount: 'num', date: 'date', projectId: 'refN', note: 'str' },
     notes: { id: 'id', title: 'str', text: 'str', tag: ['normal', 'important', 'urgent'], lt: ['', 'project', 'worker', 'installer'], lid: 'refN', alarm: 'bool', date: 'dateOpt', time: 'time', done: 'bool', created: 'num' },

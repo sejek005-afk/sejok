@@ -110,7 +110,7 @@ test('project price change from a date and per-entry price', () => {
     addPrice(p, '1405/08/08', 2000);
     save();
     const a = agg(ALL, new Set([p.id]));
-    const g = [...progressByRate(p.id, '1405/08/01', '1405/08/30')];
+    const g = progressByRate(p.id, '1405/08/01', '1405/08/30').map(x => [x.rate, x.meters]);
     const back = sanitizeDB(JSON.parse(JSON.stringify(DB))).db;
     return { rev: a.revenue, g, prices: back.projects[0].prices.length, rate: back.progress[2].rate, cur: rateAt(p, '1405/09/01'), old: rateAt(p, '1405/08/07') };
   })()`);
@@ -120,6 +120,38 @@ test('project price change from a date and per-entry price', () => {
   assert.strictEqual(r.rate, 3000);
   assert.strictEqual(r.cur, 2000);
   assert.strictEqual(r.old, 1000);
+});
+
+test('project types (تیپ): 1000 m with type A 100 m @500 and type B 300 m @800', () => {
+  const t = boot();
+  const r = t.run(`(() => {
+    window.scrollTo = () => {};
+    const c = { id: nid(), name: 'ک' }; DB.cats.push(c);
+    const p = { id: nid(), catId: c.id, name: 'پ', address: '', type: 'mat', area: 1000, price: 300, laborPrice: 0, contract: 0, material: 0, created: '1405/08/01' };
+    DB.projects.push(p);
+    p.parts = [{ id: nid(), name: 'تیپ A', area: 100, price: 500 }, { id: nid(), name: 'تیپ B', area: 300, price: 800 }];
+    const [A, B] = p.parts;
+    const pe = (date, meters, partId, rate) => DB.progress.push({ id: nid(), projectId: p.id, date, meters, rate: rate || 0, partId: partId || null, installerId: null, instMeters: 0, instRate: 0, note: '' });
+    pe('1405/08/02', 50, A.id); pe('1405/08/03', 100, B.id); pe('1405/08/04', 20); pe('1405/08/05', 10, B.id, 900);
+    save();
+    const a = agg(ALL, new Set([p.id]));
+    const g = progressByRate(p.id, '1405/08/01', '1405/08/30').map(x => [x.label, x.rate, x.meters]);
+    const total = contractTotal(p);
+    newStatement(p.id);
+    const st = DB.statements[0].items.filter(i => i.auto).map(i => [i.title, i.price, i.qty]);
+    stack = [{ name: 'project', id: p.id }]; render();
+    const back = sanitizeDB(JSON.parse(JSON.stringify(DB))).db;
+    return { rev: a.revenue, g, total, st, parts: back.projects[0].parts.length, partId: back.progress[0].partId === A.id, html: document.getElementById('main').innerHTML.includes('تیپ B') };
+  })()`);
+  assert.strictEqual(r.rev, 50 * 500 + 100 * 800 + 20 * 300 + 10 * 900);
+  eq(r.g, [['تیپ A', 500, 50], ['تیپ B', 800, 100], ['', 300, 20], ['', 900, 10]]);
+  // باقی‌مانده: A 50×500 + B (300−110)×800 + بدون تیپ (600−30)... محاسبه: done 120000 + 25000 + 152000 + rest
+  const rest = 1000 - 180 - (50 + 190);
+  assert.strictEqual(r.total, 120000 + 50 * 500 + 190 * 800 + rest * 300);
+  assert.strictEqual(r.st.length, 4);
+  assert.ok(r.st[0][0].includes('تیپ A') && r.st[0][1] === 500 && r.st[0][2] === 50);
+  assert.strictEqual(r.parts, 2);
+  assert.ok(r.partId && r.html);
 });
 
 test('contractor partnership splits profit; payment to contractor reduces partner share', () => {

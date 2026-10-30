@@ -150,16 +150,29 @@ function wageAt(w, d) { return w ? (histAt(w.wages, d || todayJ(), 'wage', w.wag
 // قیمت هر متر پروژه در یک تاریخ (کنترات همیشه مبلغ کل ÷ متراژ کل است)
 function rateAt(p, d) { return p.type === 'contract' ? rate(p) : (histAt(p.prices, d || todayJ(), 'price', rate(p)) || 0); }
 // قیمت هر متر یک ردیف پیشرفت کار: اگر برای خود ردیف قیمت جدا زده شده همان، وگرنه قیمت پروژه در آن تاریخ
-function entryRate(e, p) { return p.type !== 'contract' && Number(e.rate) > 0 ? Number(e.rate) : rateAt(p, e.date); }
+function entryRate(e, p) {
+  if (p.type === 'contract') return rate(p);
+  if (Number(e.rate) > 0) return Number(e.rate);
+  const pt = e.partId ? partOf(p, e.partId) : null;
+  return pt && pt.price > 0 ? pt.price : rateAt(p, e.date);
+}
+// تیپ‌های پروژه (فقط متری با متریال و اجرتی)
+const partsOf = p => p.type === 'contract' ? [] : (p.parts || []);
+const partOf = (p, id) => (p.parts || []).find(x => x.id === +id) || null;
 // فیلد قیمت جاری پروژه بر اساس نوع قرارداد
 const priceKey = p => p.type === 'labor' ? 'laborPrice' : 'price';
 const PTYPE = { mat: 'با متریال', labor: 'اجرتی', contract: 'کنترات' };
 const ptype = p => PTYPE[p.type] || PTYPE.mat;
 function contractTotal(p) {
   if (p.type === 'contract') return p.contract || 0;
-  // کار انجام‌شده با قیمت خودش + باقی‌مانده با قیمت امروز
+  // کار انجام‌شده با قیمت خودش + باقی‌مانده هر تیپ با قیمت تیپ + باقی‌مانده بدون تیپ با قیمت امروز
   const done = agg(ALL, new Set([p.id]));
-  return done.revenue + Math.max(0, (p.area || 0) - done.meters) * rateAt(p, todayJ());
+  let left = Math.max(0, (p.area || 0) - done.meters), extra = 0;
+  for (const pt of partsOf(p)) {
+    const rem = Math.max(0, (pt.area || 0) - partDone(p, pt.id));
+    extra += rem * (pt.price > 0 ? pt.price : rateAt(p, todayJ())); left -= rem;
+  }
+  return done.revenue + extra + Math.max(0, left) * rateAt(p, todayJ());
 }
 function matPerM(p) { return p.type === 'labor' ? 0 : (p.area > 0 ? (p.material || 0) / p.area : 0); }
 
@@ -464,6 +477,49 @@ function projectForm(id, catId) {
     else { const np = Object.assign({ id: nid(), created: todayJ() }, o); DB.projects.push(np); return () => go('project', { id: np.id }); }
   }, p ? () => deleteProject(p) : null);
 }
+// ===================== تیپ‌های پروژه =====================
+function partDone(p, id) { return sum(DB.progress.filter(e => e.projectId === p.id && e.partId === id), e => e.meters); }
+function lastPart(pid) {
+  const xs = DB.progress.filter(e => e.projectId === pid && e.partId).sort(byDateDesc);
+  return xs.length ? xs[0].partId : '';
+}
+function partsCard(p) {
+  const parts = partsOf(p);
+  let h = `<div class="card"><div class="ct"><b>تیپ‌ها / قسمت‌های پروژه</b><button class="btn sm pri" onclick="partForm(${p.id})">${ic('plus')} تیپ</button></div>`;
+  if (!parts.length) return h + `<div class="mut">اگر قسمت‌هایی از پروژه قیمت متفاوت دارند (مثلاً ۱۰۰ متر تیپ A متری ۵۰۰ و ۳۰۰ متر تیپ B)، برای هر کدام یک تیپ بسازید و هنگام ثبت پیشرفت کار، تیپ را انتخاب کنید.</div></div>`;
+  let used = 0;
+  for (const pt of parts) {
+    const done = partDone(p, pt.id), pr = pt.price > 0 ? pt.price : rateAt(p, todayJ());
+    const pct = pt.area > 0 ? Math.min(100, done / pt.area * 100) : 0;
+    used += pt.area || 0;
+    h += `<div class="tx" onclick="partForm(${p.id},${pt.id})" style="display:block;cursor:pointer"><div class="hl"><b>${esc(pt.name)}</b><span>${money(pr)} هر متر</span></div>
+      <div class="bar" style="margin:6px 0"><i style="width:${pct}%;background:var(--yellow)"></i></div>
+      <div class="hl mut"><span>${faNum(done)} از ${faNum(pt.area || 0)} متر</span><span>کارکرد: ${money(done * pr)}</span></div></div>`;
+  }
+  const rest = (p.area || 0) - used;
+  const restDone = sum(DB.progress.filter(e => e.projectId === p.id && !(e.partId && partOf(p, e.partId))), e => e.meters);
+  h += `<div class="kv" style="margin-top:6px"><span>بدون تیپ (قیمت پروژه ${money(rateAt(p, todayJ()))})</span><span>${faNum(restDone)} از ${faNum(Math.max(0, rest))} متر</span></div>`;
+  if (rest < 0) h += `<div class="mut" style="color:var(--bad)">جمع متراژ تیپ‌ها (${faNum(used)} متر) از متراژ کل پروژه (${faNum(p.area || 0)} متر) بیشتر است.</div>`;
+  return h + '</div>';
+}
+function partForm(pid, id) {
+  const p = proj(pid); if (!p) return;
+  const pt = id ? partOf(p, id) : null;
+  const others = sum(partsOf(p).filter(x => x !== pt), x => x.area);
+  openForm(pt ? 'ویرایش تیپ' : 'تیپ / قسمت جدید', [
+    { k: 'name', label: 'نام تیپ (مثلاً تیپ A، سقف راهرو)', req: true, value: pt && pt.name },
+    { k: 'area', label: 'متراژ این تیپ (متر مربع)', type: 'num', req: true, value: pt && pt.area,
+      hint: `از متراژ کل ${faNum(p.area || 0)} متر، ${faNum(Math.max(0, (p.area || 0) - others))} متر هنوز به تیپی داده نشده.` },
+    { k: 'price', label: (p.type === 'labor' ? 'قیمت اجرتی هر متر' : 'قیمت هر متر مربع') + ' این تیپ (تومان)', type: 'money', req: true, value: pt ? pt.price : rateAt(p, todayJ()) },
+  ], o => {
+    if (others + o.area > (p.area || 0) + 1e-9) { toast(`جمع متراژ تیپ‌ها از متراژ کل پروژه (${faNum(p.area || 0)} متر) بیشتر می‌شود`); return false; }
+    if (pt) Object.assign(pt, o);
+    else { p.parts = (p.parts || []).concat([{ id: nid(), name: o.name, area: o.area, price: o.price }]); }
+  }, pt ? () => {
+    for (const e of DB.progress) if (e.projectId === p.id && e.partId === pt.id) e.partId = null;
+    p.parts = (p.parts || []).filter(x => x !== pt);
+  } : null);
+}
 function priceHint(p) {
   if (!p) return '';
   return p.prices && p.prices.length ? 'تغییر این قیمت از امروز حساب می‌شود. برای تاریخ دیگر، در صفحه پروژه «تغییر قیمت از تاریخ» را بزنید.'
@@ -668,14 +724,18 @@ function progressForm(pid, id) {
   openForm(e ? 'ویرایش پیشرفت کار' : 'ثبت پیشرفت کار', [
     { k: 'date', label: 'تاریخ', type: 'date', value: e && e.date },
     { k: 'meters', label: 'متراژ انجام‌شده (متر مربع)', type: 'num', req: true, value: e && e.meters },
+    ...(proj(pid) && partsOf(proj(pid)).length ? [{ k: 'partId', label: 'تیپ / قسمت', type: 'select', numeric: true,
+      opts: [['', '— بدون تیپ (قیمت پروژه) —']].concat(partsOf(proj(pid)).map(x => [x.id, `${x.name} (${rnd(x.price || rateAt(proj(pid), todayJ())).toLocaleString('fa-IR')} هر متر)`])),
+      value: e ? e.partId || '' : lastPart(pid) }] : []),
     ...(proj(pid) && proj(pid).type !== 'contract' ? [{ k: 'rate', label: 'قیمت هر متر این مورد (اختیاری)', type: 'money', value: e && e.rate ? e.rate : '',
-      hint: 'فقط وقتی این قسمت قیمتش با قیمت پروژه فرق دارد پر کنید. خالی بماند، قیمت پروژه در همان تاریخ حساب می‌شود.' }] : []),
+      hint: 'معمولاً خالی بماند: قیمت تیپ انتخاب‌شده یا قیمت پروژه در همان تاریخ حساب می‌شود. فقط برای موردی که قیمتش با هر دو فرق دارد پر کنید.' }] : []),
     { k: 'installerId', label: 'نصاب متری (اختیاری)', type: 'select', numeric: true, opts: instOpts('— بدون نصاب —'), value: e ? e.installerId || '' : '' },
     { k: 'instMeters', label: 'متراژ کار نصاب', type: 'num', value: e && e.instMeters, when: o => !!o.installerId, hint: 'اگر خالی بماند، برابر متراژ انجام‌شده در نظر گرفته می‌شود.' },
     { k: 'note', label: 'توضیحات', type: 'textarea', value: e && e.note },
   ], o => {
     const i = o.installerId ? inst(o.installerId) : null;
-    const rec = { date: o.date, meters: o.meters, rate: o.rate > 0 ? o.rate : 0, note: o.note, installerId: i ? i.id : null, instMeters: i ? (o.instMeters || o.meters) : 0, instRate: i ? (e && e.installerId === i.id ? e.instRate : i.rate) : 0 };
+    const pp = proj(pid), pt = pp && o.partId ? partOf(pp, o.partId) : null;
+    const rec = { date: o.date, meters: o.meters, rate: o.rate > 0 ? o.rate : 0, partId: pt ? pt.id : null, note: o.note, installerId: i ? i.id : null, instMeters: i ? (o.instMeters || o.meters) : 0, instRate: i ? (e && e.installerId === i.id ? e.instRate : i.rate) : 0 };
     if (e) Object.assign(e, rec); else DB.progress.push(Object.assign({ id: nid(), projectId: pid }, rec));
     return () => showDay(pid, o.date);
   }, e ? () => { DB.progress = DB.progress.filter(x => x !== e); } : null);
@@ -838,6 +898,7 @@ V.project = r => {
       <div style="text-align:left"><div class="mut">باقی‌مانده</div><b>${faNum(Math.max(0, (p.area || 0) - a.meters))} متر</b></div></div>
       ${tape(pct)}<div class="mut">از متراژ کل ${faNum(p.area || 0)} متر مربع</div></div>`;
     h += `<div class="card">${breakdown(a, p)}</div>`;
+    if (p.type !== 'contract') h += partsCard(p);
     if (window.projAccountCard) h += projAccountCard(p);
     h += `<div class="card"><div class="ct"><b>اطلاعات پروژه</b><button class="btn sm" onclick="projectForm(${p.id})">ویرایش</button></div>
       ${p.address ? `<div class="kv"><span>آدرس</span><span>${esc(p.address)}</span></div>` : ''}
@@ -862,6 +923,7 @@ V.project = r => {
       h += `<div class="card"><div class="ct"><b>${showDate(d)}</b><span class="badge">${dayName(d)}</span></div>`;
       for (const e of entries.filter(x => x.date === d)) {
         h += `<div class="tx" onclick="progressForm(${p.id},${e.id})"><span class="dot" style="background:var(--yellow-soft);color:#8A6400">${ic('tape')}</span><div class="d"><div><b>${faNum(e.meters)} متر</b>${e.note ? ' — ' + esc(e.note) : ''}</div>
+          ${e.partId && partOf(p, e.partId) ? `<div class="mut">${/^تیپ/.test(partOf(p, e.partId).name.trim()) ? '' : 'تیپ: '}${esc(partOf(p, e.partId).name)}</div>` : ''}
           ${p.type !== 'contract' && e.rate > 0 ? `<div class="mut">قیمت جدا: ${money(e.rate)} هر متر</div>` : ''}
           ${e.installerId ? `<div class="mut">نصاب: ${esc(iname(e.installerId))} (${faNum(e.instMeters)} متر)</div>` : ''}</div><span class="mut">${ic('edit')}</span></div>`;
       }
