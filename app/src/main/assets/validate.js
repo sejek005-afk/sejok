@@ -45,15 +45,18 @@
 
   const ITEM = { id: 'id', title: 'str', desc: 'str', unit: 'str', qty: 'num', price: 'num', disc: 'num' };
   const PAY = { id: 'id', date: 'date', amount: 'num', method: ['cash', 'card', 'cheque'], note: 'str', chequeId: 'refN' };
+  // سابقه دستمزد شاگرد / قیمت پروژه: از تاریخ from (خالی یعنی از ابتدا)
+  const WAGE = { from: 'dateOpt', wage: 'num' };
+  const PRICE = { from: 'dateOpt', price: 'num' };
   const SITEM = { id: 'id', title: 'str', desc: 'str', unit: 'str', price: 'num', qty: 'num', auto: 'bool' };
   const SCHEMA = {
     cats: { id: 'id', name: 'str' },
-    projects: { id: 'id', catId: 'ref', name: 'str', address: 'str', type: ['mat', 'labor', 'contract'], area: 'num', price: 'num', laborPrice: 'num', contract: 'num', material: 'num', created: 'dateOpt' },
-    workers: { id: 'id', first: 'str', last: 'str', address: 'str', phone: 'str', wage: 'num', projectId: 'refN', active: 'bool', fillFrom: 'intN' },
+    projects: { id: 'id', catId: 'ref', name: 'str', address: 'str', type: ['mat', 'labor', 'contract'], area: 'num', price: 'num', laborPrice: 'num', contract: 'num', material: 'num', created: 'dateOpt', prices: { arr: PRICE } },
+    workers: { id: 'id', first: 'str', last: 'str', address: 'str', phone: 'str', wage: 'num', projectId: 'refN', active: 'bool', fillFrom: 'intN', wages: { arr: WAGE } },
     installers: { id: 'id', first: 'str', last: 'str', address: 'str', phone: 'str', rate: 'num' },
-    contractors: { id: 'id', first: 'str', last: 'str', phone: 'str' },
-    progress: { id: 'id', projectId: 'ref', date: 'date', meters: 'num', installerId: 'refN', instMeters: 'num', instRate: 'num', note: 'str' },
-    tx: { id: 'id', type: ['in', 'wpay', 'ipay', 'extra', 'misc'], sub: ['', 'advance', 'settle'], amount: 'num', date: 'date', note: 'str', workerId: 'refN', installerId: 'refN', projectId: 'refN', contractorId: 'refN' },
+    contractors: { id: 'id', first: 'str', last: 'str', phone: 'str', partner: 'bool', share: 'num' },
+    progress: { id: 'id', projectId: 'ref', date: 'date', meters: 'num', installerId: 'refN', instMeters: 'num', instRate: 'num', rate: 'num', note: 'str' },
+    tx: { id: 'id', type: ['in', 'wpay', 'ipay', 'extra', 'misc', 'cpay'], sub: ['', 'advance', 'settle'], amount: 'num', date: 'date', note: 'str', workerId: 'refN', installerId: 'refN', projectId: 'refN', contractorId: 'refN' },
     adj: { id: 'id', who: ['w', 'i'], pid: 'ref', type: ['bonus', 'fine'], amount: 'num', date: 'date', projectId: 'refN', note: 'str' },
     notes: { id: 'id', title: 'str', text: 'str', tag: ['normal', 'important', 'urgent'], lt: ['', 'project', 'worker', 'installer'], lid: 'refN', alarm: 'bool', date: 'dateOpt', time: 'time', done: 'bool', created: 'num' },
     cheques: { id: 'id', dir: ['in', 'out'], cur: ['تومان', 'ریال'], amount: 'num', due: 'date', party: 'str', no: 'str', bank: 'str', note: 'str', status: ['pending', 'cleared', 'bounced'], alarm: 'bool', before: 'int', time: 'time', invoiceId: 'refN', payId: 'refN', created: 'num' },

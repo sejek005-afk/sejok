@@ -150,8 +150,12 @@ function itemFromProject(id) {
     { k: 'basis', label: 'مقدار بر اساس', type: 'select', opts: [['done', 'متراژ انجام‌شده (از پیشرفت کار)'], ['area', 'متراژ کل پروژه']], value: 'done' },
   ], o => {
     const p = proj(o.p); if (!p) return false;
-    const qty = o.basis === 'area' ? (p.area || 0) : agg(ALL, new Set([p.id])).meters;
-    inv.items.push({ id: nid(), title: `${(cat(p.catId) || {}).name || ''} — ${p.name}`.replace(/^ — /, ''), desc: p.address || '', qty: Math.round(qty * 100) / 100, unit: 'متر مربع', price: rate(p) * (ccy() === 'ریال' ? 10 : 1), disc: 0 });
+    const title = `${(cat(p.catId) || {}).name || ''} — ${p.name}`.replace(/^ — /, '');
+    const k = ccy() === 'ریال' ? 10 : 1;
+    // متراژ انجام‌شده به تفکیک قیمت هر متر؛ هر قیمت یک ردیف
+    const groups = o.basis === 'area' ? new Map([[rnd(rateAt(p, todayJ())), p.area || 0]]) : progressByRate(p.id, '0000/00/00', '9999/99/99');
+    if (!groups.size) groups.set(rnd(rateAt(p, todayJ())), 0);
+    for (const [r, qty] of groups) inv.items.push({ id: nid(), title: groups.size > 1 ? `${title} — هر متر ${rnd(r).toLocaleString('fa-IR')}` : title, desc: p.address || '', qty: Math.round(qty * 100) / 100, unit: 'متر مربع', price: r * k, disc: 0 });
     if (!inv.projectId) inv.projectId = p.id;
     if (!inv.customer.address && p.address) inv.customer.address = p.address;
   });
@@ -209,7 +213,7 @@ function projAccount(p) {
   for (const i of invs) { const c = invCalc(i); invoiced += c.payable; received += c.paid; }
   const k = ccy() === 'ریال' ? 10 : 1; // مبالغ پروژه به تومان است
   const work = agg(ALL, new Set([p.id])).revenue * k;
-  const contract = (p.area || 0) * rate(p) * k;
+  const contract = contractTotal(p) * k;
   return { invs, invoiced, received, due: invoiced - received, unbilled: Math.max(0, work - invoiced), work, contract };
 }
 function projAccountCard(p) {

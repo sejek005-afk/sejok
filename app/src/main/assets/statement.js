@@ -8,6 +8,16 @@ const itemKey = it => (it.title || '').trim();
 function progressMeters(pid, from, to) {
   return sum(DB.progress.filter(e => e.projectId === pid && e.date >= from && e.date <= to), e => e.meters);
 }
+// متراژ دوره به تفکیک قیمت هر متر (برای پروژه‌هایی که قیمتشان در طول کار عوض شده یا قسمت‌هایی قیمت جدا دارند)
+function progressByRate(pid, from, to) {
+  const p = proj(pid), m = new Map();
+  if (!p) return m;
+  for (const e of DB.progress) if (e.projectId === pid && e.date >= from && e.date <= to) {
+    const r = rnd(entryRate(e, p)); m.set(r, (m.get(r) || 0) + (Number(e.meters) || 0));
+  }
+  return new Map([...m].sort((a, b) => a[0] - b[0]));
+}
+function autoTitle(mt, r, many) { return many ? `${mt} — هر متر ${rnd(r).toLocaleString('fa-IR')}` : mt; }
 function mainTitle(p) { const c = cat(p.catId); return `اجرای ${c ? c.name : 'کار'} — ${p.name}`; }
 
 function newStatement(pid) {
@@ -19,8 +29,10 @@ function newStatement(pid) {
   const to = todayJ();
   const items = [];
   const mt = mainTitle(p);
-  items.push({ id: nid(), title: mt, desc: '', unit: 'متر مربع', price: rate(p) * kRial(), qty: Math.round(progressMeters(pid, from, to) * 100) / 100, auto: true });
-  if (last) for (const it of last.items) if (itemKey(it) !== mt) items.push({ id: nid(), title: it.title, desc: it.desc, unit: it.unit, price: it.price, qty: 0 });
+  const groups = progressByRate(pid, from > to ? to : from, to);
+  if (!groups.size) groups.set(rnd(rateAt(p, to)), 0);
+  for (const [r, m] of groups) items.push({ id: nid(), title: autoTitle(mt, r, groups.size > 1), desc: '', unit: 'متر مربع', price: r * kRial(), qty: Math.round(m * 100) / 100, auto: true });
+  if (last) for (const it of last.items) if (!it.auto && itemKey(it) !== mt) items.push({ id: nid(), title: it.title, desc: it.desc, unit: it.unit, price: it.price, qty: 0 });
   const s = { id: nid(), projectId: pid, no: (last ? last.no : 0) + 1, date: todayJ(), from: from > to ? to : from, to, ret: last ? last.ret : 5, items, note: '', created: Date.now() };
   DB.statements.push(s); save();
   go('stmt', { id: s.id });
@@ -67,9 +79,20 @@ function stmtHeadForm(id) {
 }
 function refreshAuto(s) {
   const p = proj(s.projectId); if (!p) return null;
-  const it = s.items.find(x => x.auto); if (!it) return null;
-  it.qty = Math.round(progressMeters(p.id, s.from, s.to) * 100) / 100;
-  return it.qty;
+  const autos = s.items.filter(x => x.auto); if (!autos.length) return null;
+  const groups = progressByRate(p.id, s.from, s.to);
+  const total = Math.round(progressMeters(p.id, s.from, s.to) * 100) / 100;
+  // یک ردیف و یک قیمت: مثل قبل فقط متراژ به‌روز می‌شود (قیمتی که دستی عوض شده می‌ماند)
+  if (autos.length === 1 && groups.size <= 1) { autos[0].qty = total; return total; }
+  const mt = mainTitle(p), used = new Set();
+  for (const [r, m] of groups) {
+    let it = autos.find(x => !used.has(x) && Math.abs(x.price - r * kRial()) < 0.5);
+    if (!it) { it = { id: nid(), title: autoTitle(mt, r, true), desc: '', unit: 'متر مربع', price: r * kRial(), qty: 0, auto: true }; s.items.push(it); }
+    used.add(it); it.qty = Math.round(m * 100) / 100;
+    if (itemKey(it) === mt && groups.size > 1) it.title = autoTitle(mt, r, true);
+  }
+  for (const it of autos) if (!used.has(it)) it.qty = 0;
+  return total;
 }
 function stmtRefresh(id) {
   const s = getStmt(id); const n = refreshAuto(s);

@@ -7,7 +7,7 @@ const REF_AGG = `(function (pred, pids) {
     if (!pred(e.date)) continue;
     const p = DB.projects.find(x => x.id === e.projectId); if (!p) continue;
     const m = Number(e.meters) || 0;
-    r.meters += m; r.revenue += m * rate(p); r.material += m * matPerM(p);
+    r.meters += m; r.revenue += m * entryRate(e, p); r.material += m * matPerM(p);
     r.installers += (Number(e.instMeters) || 0) * (Number(e.instRate) || 0);
   }
   for (const k in DB.att) {

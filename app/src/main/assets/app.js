@@ -137,9 +137,30 @@ const cname = id => fullName(contr(id)) || 'پیمانکار حذف‌شده';
 
 // کنترات: مبلغ کل ثابت؛ درآمد به نسبت متراژ انجام‌شده از متراژ کل
 function rate(p) { return p.type === 'labor' ? (p.laborPrice || 0) : p.type === 'contract' ? (p.area > 0 ? (p.contract || 0) / p.area : 0) : (p.price || 0); }
+
+// ===================== سابقه دستمزد و قیمت (از تاریخ) =====================
+// لیست [{from, wage}] یا [{from, price}]؛ from خالی یعنی «از ابتدا». مقدار هر تاریخ = آخرین ردیفی که از آن تاریخ شروع شده.
+function histAt(list, d, key, base) {
+  let v = base, best = null;
+  for (const x of list || []) if ((x.from || '') <= d && (best === null || (x.from || '') >= best)) { best = x.from || ''; v = x[key]; }
+  return v;
+}
+// دستمزد روزانه شاگرد در یک تاریخ
+function wageAt(w, d) { return w ? (histAt(w.wages, d || todayJ(), 'wage', w.wage) || 0) : 0; }
+// قیمت هر متر پروژه در یک تاریخ (کنترات همیشه مبلغ کل ÷ متراژ کل است)
+function rateAt(p, d) { return p.type === 'contract' ? rate(p) : (histAt(p.prices, d || todayJ(), 'price', rate(p)) || 0); }
+// قیمت هر متر یک ردیف پیشرفت کار: اگر برای خود ردیف قیمت جدا زده شده همان، وگرنه قیمت پروژه در آن تاریخ
+function entryRate(e, p) { return p.type !== 'contract' && Number(e.rate) > 0 ? Number(e.rate) : rateAt(p, e.date); }
+// فیلد قیمت جاری پروژه بر اساس نوع قرارداد
+const priceKey = p => p.type === 'labor' ? 'laborPrice' : 'price';
 const PTYPE = { mat: 'با متریال', labor: 'اجرتی', contract: 'کنترات' };
 const ptype = p => PTYPE[p.type] || PTYPE.mat;
-function contractTotal(p) { return p.type === 'contract' ? (p.contract || 0) : (p.area || 0) * rate(p); }
+function contractTotal(p) {
+  if (p.type === 'contract') return p.contract || 0;
+  // کار انجام‌شده با قیمت خودش + باقی‌مانده با قیمت امروز
+  const done = agg(ALL, new Set([p.id]));
+  return done.revenue + Math.max(0, (p.area || 0) - done.meters) * rateAt(p, todayJ());
+}
 function matPerM(p) { return p.type === 'labor' ? 0 : (p.area > 0 ? (p.material || 0) / p.area : 0); }
 
 // ===================== حضور و غیاب خودکار =====================
@@ -152,7 +173,7 @@ function syncAtt() {
     if (t - from > 400) from = t - 400; // محافظت
     for (let n = from; n <= t; n++) {
       const k = w.id + '|' + jdnToJ(n);
-      if (!DB.att[k]) { DB.att[k] = { p: w.projectId, s: 'p', w: w.wage || 0 }; changed = true; }
+      if (!DB.att[k]) { DB.att[k] = { p: w.projectId, s: 'p', w: wageAt(w, jdnToJ(n)) }; changed = true; }
     }
     if (w.fillFrom !== t + 1) { w.fillFrom = t + 1; changed = true; }
   }
@@ -193,7 +214,7 @@ function buildIdx() {
     const p = I.proj.get(e.projectId); if (!p) continue;
     const m = Number(e.meters) || 0, x = acc(e.date, e.projectId);
     add(x, 'meters', m);
-    add(x, 'revenue', m * (Number(rate(p)) || 0));
+    add(x, 'revenue', m * (Number(entryRate(e, p)) || 0));
     add(x, 'material', m * (Number(matPerM(p)) || 0));
     add(x, 'installers', (Number(e.instMeters) || 0) * (Number(e.instRate) || 0));
   }
@@ -262,7 +283,19 @@ function contrStats(c) {
   const isIn = t => t.type === 'in' || t.type === 'misc';
   const inc = sum(txs.filter(isIn), t => t.amount);
   const out = sum(txs.filter(t => !isIn(t)), t => t.amount);
-  return { txs, inc, out, bal: inc - out };
+  // واریز به حساب خود پیمانکار جزو خرج کار نیست؛ در شراکت از سهم شریک کم می‌شود
+  const cpaid = sum(txs.filter(t => t.type === 'cpay'), t => t.amount);
+  const spent = out - cpaid;
+  const r = { txs, inc, out, spent, cpaid, bal: inc - out };
+  if (c.partner) {
+    const share = Math.min(100, Math.max(0, c.share > 0 ? c.share : 50));
+    r.profit = inc - spent;
+    r.share = share;
+    r.partnerShare = r.profit * share / 100;
+    r.myShare = r.profit - r.partnerShare;
+    r.partnerDue = r.partnerShare - cpaid;
+  }
+  return r;
 }
 
 // ===================== مسیریابی =====================
@@ -411,15 +444,62 @@ function projectForm(id, catId) {
     { k: 'type', label: 'نوع قرارداد', type: 'select', opts: [['mat', 'متری با متریال (قیمت هر متر مربع)'], ['labor', 'اجرتی (قیمت اجرتی هر متر)'], ['contract', 'کنترات (مبلغ کل ثابت)']], value: p ? p.type : 'mat' },
     { k: 'area', label: 'متراژ کل (متر مربع)', type: 'num', value: p && p.area, hint: 'در کنترات، درآمد هر روز به نسبت متراژ انجام‌شده از متراژ کل حساب می‌شود.' },
     { k: 'contract', label: 'مبلغ کل کنترات (تومان)', type: 'money', value: p && p.contract, when: isT('contract') },
-    { k: 'price', label: 'قیمت هر متر مربع (تومان)', type: 'money', value: p && p.price, when: isT('mat') },
-    { k: 'laborPrice', label: 'قیمت اجرتی هر متر مربع (تومان)', type: 'money', value: p && p.laborPrice, when: isT('labor') },
+    { k: 'price', label: 'قیمت هر متر مربع (تومان)', type: 'money', value: p && (p.type === 'mat' && p.prices && p.prices.length ? rateAt(p, todayJ()) : p.price), when: isT('mat'), hint: priceHint(p) },
+    { k: 'laborPrice', label: 'قیمت اجرتی هر متر مربع (تومان)', type: 'money', value: p && (p.type === 'labor' && p.prices && p.prices.length ? rateAt(p, todayJ()) : p.laborPrice), when: isT('labor'), hint: priceHint(p) },
     { k: 'material', label: 'هزینه متریال خریداری‌شده (تومان)', type: 'money', value: p && p.material, when: isT('mat', 'contract'), hint: 'به ازای هر متر کار، به نسبت متراژ کل کسر می‌شود.' },
   ], o => {
     if (o.type === 'contract' && !(o.contract > 0)) { toast('مبلغ کل کنترات را وارد کنید'); return false; }
     if (o.type === 'contract' && !(o.area > 0)) { toast('برای کنترات، متراژ کل را وارد کنید'); return false; }
-    if (p) Object.assign(p, o);
+    if (p) {
+      // با سابقه قیمت: تغییر قیمت در این فرم از امروز حساب می‌شود
+      if (p.prices && p.prices.length && o.type === p.type && o.type !== 'contract') {
+        const k = priceKey(p), np = o[k]; delete o.price; delete o.laborPrice;
+        Object.assign(p, o);
+        if (np !== rateAt(p, todayJ())) addPrice(p, todayJ(), np);
+      } else {
+        if (o.type !== p.type) p.prices = [];
+        Object.assign(p, o);
+      }
+    }
     else { const np = Object.assign({ id: nid(), created: todayJ() }, o); DB.projects.push(np); return () => go('project', { id: np.id }); }
   }, p ? () => deleteProject(p) : null);
+}
+function priceHint(p) {
+  if (!p) return '';
+  return p.prices && p.prices.length ? 'تغییر این قیمت از امروز حساب می‌شود. برای تاریخ دیگر، در صفحه پروژه «تغییر قیمت از تاریخ» را بزنید.'
+    : 'تغییر این قیمت روی همه کارهای ثبت‌شده اثر دارد. اگر قیمت فقط از یک تاریخ به بعد عوض شده، در صفحه پروژه «تغییر قیمت از تاریخ» را بزنید.';
+}
+// ===================== تغییر قیمت هر متر پروژه از یک تاریخ =====================
+function addPrice(p, from, price) {
+  if (!p.prices || !p.prices.length) p.prices = [{ from: '', price: rate(p) }];
+  p.prices = p.prices.filter(x => (x.from || '') !== from);
+  p.prices.push({ from, price });
+  p.prices.sort((a, b) => (a.from || '').localeCompare(b.from || ''));
+  if (p.prices.length === 1 && !p.prices[0].from) { p[priceKey(p)] = p.prices[0].price; p.prices = []; }
+  else p[priceKey(p)] = rateAt(p, todayJ());
+}
+function priceChangeForm(pid) {
+  const p = proj(pid); if (!p || p.type === 'contract') return;
+  openForm('تغییر قیمت هر متر از تاریخ', [
+    { k: 'price', label: (p.type === 'labor' ? 'قیمت اجرتی جدید هر متر' : 'قیمت جدید هر متر مربع') + ' (تومان)', type: 'money', req: true, value: rateAt(p, todayJ()) },
+    { k: 'from', label: 'از تاریخ', type: 'date', value: todayJ(), hint: 'متراژهای ثبت‌شده قبل از این تاریخ با قیمت قبلی می‌ماند و از این تاریخ به بعد با قیمت جدید حساب می‌شود. ردیف‌هایی که در پیشرفت کار قیمت جدا دارند دست نمی‌خورند.' },
+  ], o => {
+    addPrice(p, o.from, o.price);
+    return () => toast(`قیمت از ${showDate(o.from)} ثبت شد`);
+  });
+}
+function priceDelete(pid, from) {
+  const p = proj(pid); if (!p || !from) return;
+  askConfirm(`تغییر قیمت ${showDate(from)} حذف شود؟ کارهای آن دوره دوباره با قیمت قبلی حساب می‌شوند.`, () => {
+    p.prices = (p.prices || []).filter(x => x.from !== from);
+    addPrice(p, '', (p.prices.find(x => !x.from) || { price: rate(p) }).price);
+    save(); render(); toast('حذف شد');
+  });
+}
+function priceHistHtml(p) {
+  const list = (p.prices || []).slice().sort((a, b) => (b.from || '').localeCompare(a.from || ''));
+  if (list.length < 2) return '';
+  return `<div class="mut" style="margin:8px 0 2px">سابقه قیمت هر متر</div>` + list.map(x => `<div class="kv"><span>${x.from ? 'از ' + showDate(x.from) : 'از ابتدا'}</span><span>${money(x.price)}${x.from ? ` <button class="btn sm" style="margin:0 6px 0 0;padding:2px 8px" onclick="priceDelete(${p.id},'${x.from}')">حذف</button>` : ''}</span></div>`).join('');
 }
 function deleteProject(p) {
   DB.progress = DB.progress.filter(e => e.projectId !== p.id);
@@ -436,7 +516,8 @@ function workerForm(id, presetProject) {
     { k: 'last', label: 'نام خانوادگی', value: w && w.last },
     { k: 'address', label: 'محل سکونت', value: w && w.address },
     { k: 'phone', label: 'شماره تماس (اختیاری)', type: 'num', value: w && w.phone },
-    { k: 'wage', label: 'دستمزد روزانه (تومان)', type: 'money', req: true, value: w && w.wage },
+    { k: 'wage', label: 'دستمزد روزانه (تومان)', type: 'money', req: true, value: w && wageAt(w, todayJ()),
+      hint: w ? 'تغییر این مبلغ از امروز حساب می‌شود. برای تغییر از تاریخ دیگر، در صفحه شاگرد «تغییر دستمزد از تاریخ» را بزنید.' : '' },
   ];
   if (!w) {
     fields.push({ k: 'projectId', label: 'پروژه', type: 'select', numeric: true, opts: projOpts('— بدون پروژه —'), value: presetProject || '' });
@@ -444,13 +525,67 @@ function workerForm(id, presetProject) {
   }
   openForm(w ? 'ویرایش شاگرد' : 'شاگرد جدید', fields, o => {
     o.phone = o.phone ? String(o.phone) : '';
-    if (w) { Object.assign(w, o); return; }
+    if (w) {
+      const wage = o.wage; delete o.wage;
+      Object.assign(w, o);
+      if (wage !== wageAt(w, todayJ())) changeWages(w, () => addWage(w, todayJ(), wage));
+      return;
+    }
     const nw = { id: nid(), first: o.first, last: o.last, address: o.address, phone: o.phone, wage: o.wage, projectId: o.projectId || null, active: !!o.projectId && o.active === '1', fillFrom: todayJdn() };
     DB.workers.push(nw);
   }, w ? () => {
     DB.workers = DB.workers.filter(x => x !== w);
     if (cur().name === 'worker') stack.pop();
   } : null);
+}
+
+// ===================== تغییر دستمزد شاگرد از یک تاریخ =====================
+// روزهای حضور ثبت‌شده که با دستمزد قبلی آن تاریخ حساب شده بودند با دستمزد جدید دوباره حساب می‌شوند؛
+// روزهایی که دستی مبلغ دیگری گرفته‌اند دست نمی‌خورند. خروجی: تعداد روزهای به‌روزشده
+function changeWages(w, mutate) {
+  const before = (w.wages || []).map(x => ({ from: x.from, wage: x.wage })), baseBefore = w.wage;
+  const oldAt = d => histAt(before, d, 'wage', baseBefore) || 0;
+  mutate();
+  w.wages = (w.wages || []).sort((a, b) => (a.from || '').localeCompare(b.from || ''));
+  if (w.wages.length === 1 && !w.wages[0].from) { w.wage = w.wages[0].wage; w.wages = []; }
+  else w.wage = wageAt(w, todayJ());
+  const pre = w.id + '|';
+  let n = 0;
+  for (const k in DB.att) {
+    if (!k.startsWith(pre)) continue;
+    const d = k.slice(pre.length), a = DB.att[k], o = oldAt(d), nw = wageAt(w, d);
+    if (o === nw) continue;
+    if (a.s === 'p' && a.w === o) { a.w = nw; n++; }
+    else if (a.s === 'h' && a.w === Math.round(o / 2)) { a.w = Math.round(nw / 2); n++; }
+  }
+  return n;
+}
+function addWage(w, from, wage) {
+  if (!w.wages || !w.wages.length) w.wages = [{ from: '', wage: w.wage || 0 }];
+  w.wages = w.wages.filter(x => (x.from || '') !== from);
+  w.wages.push({ from, wage });
+}
+function wageChangeForm(wid) {
+  const w = worker(wid); if (!w) return;
+  openForm('تغییر دستمزد از تاریخ', [
+    { k: 'wage', label: 'دستمزد روزانه جدید (تومان)', type: 'money', req: true, value: wageAt(w, todayJ()) },
+    { k: 'from', label: 'از تاریخ', type: 'date', value: todayJ(), hint: 'روزهای قبل از این تاریخ با دستمزد قبلی می‌ماند. روزهای این تاریخ به بعد، حتی اگر قبلاً ثبت شده باشند، با دستمزد جدید حساب می‌شوند (به‌جز روزهایی که دستی مبلغ دیگری برایشان زده‌اید).' },
+  ], o => {
+    const n = changeWages(w, () => addWage(w, o.from, o.wage));
+    return () => toast(`دستمزد از ${showDate(o.from)} ثبت شد${n ? ` · ${faDigits(n)} روز ثبت‌شده با مبلغ جدید حساب شد` : ''}`);
+  });
+}
+function wageDelete(wid, from) {
+  const w = worker(wid); if (!w || !from) return;
+  askConfirm(`تغییر دستمزد ${showDate(from)} حذف شود؟ روزهای آن دوره دوباره با دستمزد قبلی حساب می‌شوند.`, () => {
+    changeWages(w, () => { w.wages = (w.wages || []).filter(x => x.from !== from); });
+    save(); render(); toast('حذف شد');
+  });
+}
+function wageHistHtml(w) {
+  const list = (w.wages || []).slice().sort((a, b) => (b.from || '').localeCompare(a.from || ''));
+  if (list.length < 2) return '';
+  return `<div class="mut" style="margin:8px 0 2px">سابقه دستمزد</div>` + list.map(x => `<div class="kv"><span>${x.from ? 'از ' + showDate(x.from) : 'از ابتدا'}</span><span>${money(x.wage)}${x.from ? ` <button class="btn sm" style="margin:0 6px 0 0;padding:2px 8px" onclick="wageDelete(${w.id},'${x.from}')">حذف</button>` : ''}</span></div>`).join('');
 }
 
 function installerForm(id) {
@@ -476,18 +611,24 @@ function contractorForm(id) {
     { k: 'first', label: 'نام', req: true, value: c && c.first },
     { k: 'last', label: 'نام خانوادگی', value: c && c.last },
     { k: 'phone', label: 'شماره تماس (اختیاری)', type: 'num', value: c && c.phone },
+    { k: 'partner', label: 'شراکت', type: 'select', opts: [['0', 'خیر'], ['1', 'بله، سود بین ما تقسیم می‌شود']], value: c && c.partner ? '1' : '0',
+      hint: 'در شراکت، سود (دریافتی‌ها منهای خرج‌کردها) به نسبت سهم تقسیم می‌شود.' },
+    { k: 'share', label: 'سهم شریک (درصد)', type: 'num', value: c && c.partner ? c.share : 50, when: o => o.partner === '1' },
   ], o => {
     o.phone = o.phone ? String(o.phone) : '';
+    o.partner = o.partner === '1';
+    if (o.partner && !(o.share > 0 && o.share < 100)) { toast('سهم شریک باید بین ۱ تا ۹۹ درصد باشد'); return false; }
+    if (!o.partner) o.share = c ? c.share || 0 : 0;
     if (c) Object.assign(c, o); else DB.contractors.push(Object.assign({ id: nid() }, o));
   }, c ? () => {
-    DB.tx = DB.tx.filter(t => !(t.contractorId === c.id && t.type === 'in'));
+    DB.tx = DB.tx.filter(t => !(t.contractorId === c.id && (t.type === 'in' || t.type === 'cpay')));
     for (const t of DB.tx) if (t.contractorId === c.id) t.contractorId = null;
     DB.contractors = DB.contractors.filter(x => x !== c);
     if (cur().name === 'contractor') stack.pop();
   } : null);
 }
 
-const TXT = { in: 'دریافتی', wpay: 'واریز به شاگرد', ipay: 'پرداخت به نصاب', extra: 'هزینه مازاد', misc: 'دریافتی متفرقه' };
+const TXT = { in: 'دریافتی', wpay: 'واریز به شاگرد', ipay: 'پرداخت به نصاب', extra: 'هزینه مازاد', misc: 'دریافتی متفرقه', cpay: 'واریز به حساب پیمانکار' };
 const txLabel = t => t.sub === 'advance' ? 'مساعده' : t.sub === 'settle' ? 'تسویه حساب' : TXT[t.type];
 // preset: مقادیر ثابت مثل {type:'wpay', workerId:3} یا {contractorId:2}
 function txForm(id, preset) {
@@ -495,7 +636,7 @@ function txForm(id, preset) {
   const ps = preset || {};
   const v = k => t ? t[k] : (ps[k] != null ? ps[k] : '');
   const fields = [];
-  if (!ps.type || t) fields.push({ k: 'type', label: 'نوع', type: 'select', opts: (ps.contractorId || (t && t.contractorId) ? [['in', 'دریافتی (پول دریافت‌شده)']] : []).concat([['wpay', 'واریز به شاگرد'], ['ipay', 'پرداخت به نصاب'], ['extra', 'هزینه مازاد پروژه'], ['misc', 'دریافتی متفرقه پروژه']]), value: v('type') || (ps.contractorId ? 'in' : 'wpay') });
+  if (!ps.type || t) fields.push({ k: 'type', label: 'نوع', type: 'select', opts: (ps.contractorId || (t && t.contractorId) ? [['in', 'دریافتی (پول دریافت‌شده)']] : []).concat([['wpay', 'واریز به شاگرد'], ['ipay', 'پرداخت به نصاب'], ['extra', 'هزینه مازاد پروژه'], ['cpay', 'واریز به حساب پیمانکار'], ['misc', 'دریافتی متفرقه پروژه']]), value: v('type') || (ps.contractorId ? 'in' : 'wpay') });
   const T = o => o.type || ps.type;
   fields.push(
     { k: 'amount', label: 'مبلغ (تومان)', type: 'money', req: true, value: v('amount') },
@@ -503,7 +644,9 @@ function txForm(id, preset) {
     { k: 'workerId', label: 'شاگرد', type: 'select', numeric: true, opts: workerOpts(), value: v('workerId'), when: o => T(o) === 'wpay' },
     { k: 'installerId', label: 'نصاب', type: 'select', numeric: true, opts: instOpts(), value: v('installerId'), when: o => T(o) === 'ipay' },
     { k: 'projectId', label: 'پروژه', type: 'select', numeric: true, opts: projOpts(), value: v('projectId'), when: o => T(o) === 'extra' || T(o) === 'misc' },
-    { k: 'contractorId', label: 'از طرف پیمانکار', type: 'select', numeric: true, opts: contrOpts('— بدون پیمانکار —'), value: v('contractorId'), when: o => T(o) !== 'in' },
+    { k: 'contractorId', label: 'از طرف پیمانکار', type: 'select', numeric: true, opts: contrOpts('— بدون پیمانکار —'), value: v('contractorId'), when: o => T(o) !== 'in' && T(o) !== 'cpay' },
+    { k: 'cpayTo', label: 'به حساب پیمانکار', type: 'select', numeric: true, opts: contrOpts(), value: v('contractorId'), when: o => T(o) === 'cpay',
+      hint: 'پولی که به خود پیمانکار (یا شریک) برگردانده یا واریز شده؛ در شراکت از سهم او کم می‌شود.' },
     { k: 'note', label: 'توضیحات', type: 'textarea', value: v('note'), hint: ps.type === 'misc' ? 'مثلاً: فروش ضایعات، کار اضافه، دستمزد جابه‌جایی' : '' },
   );
   const title = t ? 'ویرایش ' + txLabel(t) : (ps.type ? TXT[ps.type] + ' جدید' : 'تراکنش جدید');
@@ -513,7 +656,8 @@ function txForm(id, preset) {
     if (type === 'wpay') { if (!o.workerId) { toast('شاگرد را انتخاب کنید'); return false; } rec.workerId = o.workerId; }
     if (type === 'ipay') { if (!o.installerId) { toast('نصاب را انتخاب کنید'); return false; } rec.installerId = o.installerId; }
     if (type === 'extra' || type === 'misc') { if (!o.projectId) { toast('پروژه را انتخاب کنید'); return false; } rec.projectId = o.projectId; }
-    rec.contractorId = type === 'in' ? (ps.contractorId || (t && t.contractorId) || null) : (o.contractorId || null);
+    rec.contractorId = type === 'in' ? (ps.contractorId || (t && t.contractorId) || null) : type === 'cpay' ? (o.cpayTo || null) : (o.contractorId || null);
+    if (type === 'cpay' && !rec.contractorId) { toast('پیمانکار را انتخاب کنید'); return false; }
     if (type === 'in' && !rec.contractorId) { toast('دریافتی فقط برای پیمانکار ثبت می‌شود'); return false; }
     if (t) Object.assign(t, rec); else DB.tx.push(Object.assign({ id: nid() }, rec));
   }, t ? () => { DB.tx = DB.tx.filter(x => x !== t); } : null);
@@ -524,20 +668,29 @@ function progressForm(pid, id) {
   openForm(e ? 'ویرایش پیشرفت کار' : 'ثبت پیشرفت کار', [
     { k: 'date', label: 'تاریخ', type: 'date', value: e && e.date },
     { k: 'meters', label: 'متراژ انجام‌شده (متر مربع)', type: 'num', req: true, value: e && e.meters },
+    ...(proj(pid) && proj(pid).type !== 'contract' ? [{ k: 'rate', label: 'قیمت هر متر این مورد (اختیاری)', type: 'money', value: e && e.rate ? e.rate : '',
+      hint: 'فقط وقتی این قسمت قیمتش با قیمت پروژه فرق دارد پر کنید. خالی بماند، قیمت پروژه در همان تاریخ حساب می‌شود.' }] : []),
     { k: 'installerId', label: 'نصاب متری (اختیاری)', type: 'select', numeric: true, opts: instOpts('— بدون نصاب —'), value: e ? e.installerId || '' : '' },
     { k: 'instMeters', label: 'متراژ کار نصاب', type: 'num', value: e && e.instMeters, when: o => !!o.installerId, hint: 'اگر خالی بماند، برابر متراژ انجام‌شده در نظر گرفته می‌شود.' },
     { k: 'note', label: 'توضیحات', type: 'textarea', value: e && e.note },
   ], o => {
     const i = o.installerId ? inst(o.installerId) : null;
-    const rec = { date: o.date, meters: o.meters, note: o.note, installerId: i ? i.id : null, instMeters: i ? (o.instMeters || o.meters) : 0, instRate: i ? (e && e.installerId === i.id ? e.instRate : i.rate) : 0 };
+    const rec = { date: o.date, meters: o.meters, rate: o.rate > 0 ? o.rate : 0, note: o.note, installerId: i ? i.id : null, instMeters: i ? (o.instMeters || o.meters) : 0, instRate: i ? (e && e.installerId === i.id ? e.instRate : i.rate) : 0 };
     if (e) Object.assign(e, rec); else DB.progress.push(Object.assign({ id: nid(), projectId: pid }, rec));
     return () => showDay(pid, o.date);
   }, e ? () => { DB.progress = DB.progress.filter(x => x !== e); } : null);
 }
 
+// اگر همه متراژ با یک قیمت باشد «متراژ × قیمت»، وگرنه میانگین قیمت هر متر
+function revLabel(a, p) {
+  if (!a.meters) return `درآمد (× ${rnd(rateAt(p, todayJ())).toLocaleString('fa-IR')})`;
+  const avg = a.revenue / a.meters;
+  const one = Math.abs(avg - Math.round(avg)) < 0.01;
+  return one ? `درآمد (${faNum(a.meters)} × ${rnd(avg).toLocaleString('fa-IR')})` : `درآمد (${faNum(a.meters)} متر، میانگین هر متر ${rnd(avg).toLocaleString('fa-IR')})`;
+}
 function breakdown(a, p) {
   return `<div class="kv"><span>متراژ کار</span><span>${faNum(a.meters)} متر</span></div>
-  <div class="kv"><span>${p.type === 'contract' ? `درآمد کنترات (سهم ${faNum(a.meters)} متر)` : `درآمد (${faNum(a.meters)} × ${rnd(rate(p)).toLocaleString('fa-IR')})`}</span><span>${money(a.revenue)}</span></div>
+  <div class="kv"><span>${p.type === 'contract' ? `درآمد کنترات (سهم ${faNum(a.meters)} متر)` : revLabel(a, p)}</span><span>${money(a.revenue)}</span></div>
   ${a.other ? `<div class="kv"><span>دریافتی متفرقه</span><span>+ ${money(a.other)}</span></div>` : ''}
   ${p.type === 'labor' ? '' : `<div class="kv"><span>متریال مصرفی</span><span>− ${money(a.material)}</span></div>`}
   <div class="kv"><span>دستمزد شاگردها (${faNum(a.wdays)} نفر‌روز)</span><span>− ${money(a.workers)}</span></div>
@@ -559,14 +712,14 @@ function setAtt(wid, date, status, pid) {
   else if (status === 'h') {
     const p = pid || (DB.att[k] && DB.att[k].p) || w.projectId;
     if (!p) { toast('ابتدا برای شاگرد پروژه انتخاب کنید'); return; }
-    DB.att[k] = { p: +p, s: 'h', w: Math.round((w.wage || 0) / 2) };
+    DB.att[k] = { p: +p, s: 'h', w: Math.round(wageAt(w, date) / 2) };
   }
   else {
     const p = pid || (DB.att[k] && DB.att[k].p) || w.projectId;
     if (!p) { toast('ابتدا برای شاگرد پروژه انتخاب کنید'); return; }
     const keep = DB.att[k] && (DB.att[k].s === 'p' || DB.att[k].s === 'h') ? DB.att[k].s : 'p';
     if (pid && keep === 'h') DB.att[k] = { p: +p, s: 'h', w: DB.att[k].w };
-    else DB.att[k] = { p: +p, s: 'p', w: (DB.att[k] && DB.att[k].s === 'p' && DB.att[k].w) || w.wage || 0 };
+    else DB.att[k] = { p: +p, s: 'p', w: (DB.att[k] && DB.att[k].s === 'p' && DB.att[k].w) || wageAt(w, date) };
   }
   save(); render();
 }
@@ -575,12 +728,12 @@ function attDayForm(wid, date) {
   openForm(`${fullName(w)} — ${showDate(date)}`, [
     { k: 's', label: 'وضعیت', type: 'select', opts: [['p', 'حاضر'], ['h', 'نیم‌روز'], ['a', 'غایب'], ['', 'ثبت نشده']], value: a ? a.s : 'p' },
     { k: 'p', label: 'پروژه', type: 'select', numeric: true, opts: projOpts(), value: a ? a.p : w.projectId, when: o => o.s === 'p' || o.s === 'h' },
-    { k: 'w', label: 'دستمزد این روز (تومان)', type: 'money', value: a && a.s === 'p' ? a.w : w.wage, when: o => o.s === 'p' },
+    { k: 'w', label: 'دستمزد این روز (تومان)', type: 'money', value: a && a.s === 'p' ? a.w : wageAt(w, date), when: o => o.s === 'p' },
   ], o => {
     const k = wid + '|' + date;
     if (o.s === '') delete DB.att[k];
     else if (o.s === 'a') DB.att[k] = { p: o.p || w.projectId || null, s: 'a', w: 0 };
-    else if (o.s === 'h') { if (!o.p) { toast('پروژه را انتخاب کنید'); return false; } DB.att[k] = { p: o.p, s: 'h', w: Math.round((w.wage || 0) / 2) }; }
+    else if (o.s === 'h') { if (!o.p) { toast('پروژه را انتخاب کنید'); return false; } DB.att[k] = { p: o.p, s: 'h', w: Math.round(wageAt(w, date) / 2) }; }
     else { if (!o.p) { toast('پروژه را انتخاب کنید'); return false; } DB.att[k] = { p: o.p, s: 'p', w: o.w }; }
   });
 }
@@ -617,7 +770,7 @@ function txRow(t, show) {
   if (t.type === 'ipay') who = 'نصاب: ' + iname(t.installerId);
   if (t.type === 'extra' || t.type === 'misc') who = 'پروژه: ' + pname(t.projectId);
   const parts = [showDate(t.date)];
-  if (show !== 'contr' && t.contractorId) parts.push('پیمانکار: ' + cname(t.contractorId));
+  if (show !== 'contr' && t.contractorId) parts.push((t.type === 'cpay' ? 'به حساب: ' : 'پیمانکار: ') + cname(t.contractorId));
   if (show !== 'target' && who) parts.push(who);
   const inc = t.type === 'in' || t.type === 'misc';
   const sign = inc ? '+' : '−';
@@ -691,11 +844,13 @@ V.project = r => {
       <div class="kv"><span>دسته</span><span>${esc((cat(p.catId) || {}).name || '')}</span></div>
       <div class="kv"><span>نوع قرارداد</span><span>${ptype(p)}</span></div>
       <div class="kv"><span>متراژ کل</span><span>${faNum(p.area || 0)} متر مربع</span></div>
-      ${p.type === 'mat' || !p.type ? `<div class="kv"><span>قیمت هر متر مربع</span><span>${money(p.price)}</span></div>` : ''}
-      ${p.type === 'labor' ? `<div class="kv"><span>قیمت اجرتی هر متر</span><span>${money(p.laborPrice)}</span></div>` : ''}
+      ${p.type === 'mat' || !p.type ? `<div class="kv"><span>قیمت هر متر مربع (امروز)</span><span>${money(rateAt(p, todayJ()))}</span></div>` : ''}
+      ${p.type === 'labor' ? `<div class="kv"><span>قیمت اجرتی هر متر (امروز)</span><span>${money(rateAt(p, todayJ()))}</span></div>` : ''}
+      ${p.type === 'contract' ? '' : priceHistHtml(p)}
       ${p.type === 'contract' ? `<div class="kv"><span>معادل هر متر مربع</span><span>${money(rate(p))}</span></div>` : ''}
       ${p.type === 'labor' ? '' : `<div class="kv"><span>هزینه متریال خریداری‌شده</span><span>${money(p.material)}</span></div><div class="kv"><span>متریال به ازای هر متر</span><span>${money(matPerM(p))}</span></div>`}
-      <div class="kv"><span>${p.type === 'contract' ? 'مبلغ کل کنترات' : 'مبلغ کل قرارداد'}</span><span>${money(contractTotal(p))}</span></div></div>`;
+      <div class="kv"><span>${p.type === 'contract' ? 'مبلغ کل کنترات' : 'مبلغ کل قرارداد'}</span><span>${money(contractTotal(p))}</span></div>
+      ${p.type === 'contract' ? '' : `<button class="btn wide" style="margin:10px 0 0" onclick="priceChangeForm(${p.id})">تغییر قیمت هر متر از تاریخ</button>`}</div>`;
   }
   if (sub === 'prog') {
     h += `<button class="btn pri wide" onclick="progressForm(${p.id})">${ic('tape')} ثبت پیشرفت کار امروز</button>`;
@@ -707,6 +862,7 @@ V.project = r => {
       h += `<div class="card"><div class="ct"><b>${showDate(d)}</b><span class="badge">${dayName(d)}</span></div>`;
       for (const e of entries.filter(x => x.date === d)) {
         h += `<div class="tx" onclick="progressForm(${p.id},${e.id})"><span class="dot" style="background:var(--yellow-soft);color:#8A6400">${ic('tape')}</span><div class="d"><div><b>${faNum(e.meters)} متر</b>${e.note ? ' — ' + esc(e.note) : ''}</div>
+          ${p.type !== 'contract' && e.rate > 0 ? `<div class="mut">قیمت جدا: ${money(e.rate)} هر متر</div>` : ''}
           ${e.installerId ? `<div class="mut">نصاب: ${esc(iname(e.installerId))} (${faNum(e.instMeters)} متر)</div>` : ''}</div><span class="mut">${ic('edit')}</span></div>`;
       }
       h += `<div style="margin-top:6px">${breakdown(a, p)}</div></div>`;
@@ -793,7 +949,9 @@ V.worker = r => {
   h += `<div class="card"><div class="ct"><b>اطلاعات</b><button class="btn sm" onclick="workerForm(${w.id})">ویرایش</button></div>
     <div class="kv"><span>محل سکونت</span><span>${esc(w.address || '—')}</span></div>
     ${w.phone ? `<div class="kv"><span>تماس</span><span>${esc(faDigits(w.phone))}</span></div>` : ''}
-    <div class="kv"><span>دستمزد روزانه</span><span>${money(w.wage)}</span></div></div>`;
+    <div class="kv"><span>دستمزد روزانه (امروز)</span><span>${money(wageAt(w, t))}</span></div>
+    ${wageHistHtml(w)}
+    <button class="btn wide" style="margin:10px 0 0" onclick="wageChangeForm(${w.id})">تغییر دستمزد از تاریخ</button></div>`;
   h += personLists('w', w, s);
   return { title: fullName(w), html: h, fab: `txForm(null,{type:'wpay',workerId:${w.id}})`, edit: `workerForm(${w.id})` };
 };
@@ -960,7 +1118,7 @@ V.contractors = () => {
   else h += '<div class="list">' + DB.contractors.map(c => {
     const s = contrStats(c);
     return `<div class="li" onclick="go('contractor',{id:${c.id}})"><span class="av sq on">${ic('wallet')}</span>
-      <div class="d"><b>${esc(fullName(c))}</b><div class="mut">دریافتی ${short(s.inc)} · خرج ${short(s.out)} هزار</div></div>
+      <div class="d"><b>${esc(fullName(c))}${c.partner ? ' <span class="badge y">شریک</span>' : ''}</b><div class="mut">دریافتی ${short(s.inc)} · خرج ${short(s.out)} هزار</div></div>
       <div class="v">${money(s.bal, 1)}<small>مانده</small></div></div>`;
   }).join('') + '</div>';
   return { title: 'پیمانکاران', html: h, fab: 'contractorForm()' };
@@ -973,7 +1131,19 @@ V.contractor = r => {
     <div class="kv"><span>واریز به شاگردها</span><span>${money(sum(s.txs.filter(t => t.type === 'wpay'), t => t.amount))}</span></div>
     <div class="kv"><span>پرداخت به نصاب‌ها</span><span>${money(sum(s.txs.filter(t => t.type === 'ipay'), t => t.amount))}</span></div>
     <div class="kv"><span>هزینه‌های مازاد</span><span>${money(sum(s.txs.filter(t => t.type === 'extra'), t => t.amount))}</span></div>
+    ${s.cpaid ? `<div class="kv"><span>واریز به حساب پیمانکار</span><span>${money(s.cpaid)}</span></div>` : ''}
     <div class="kv total"><span>مانده (دریافتی − خرج‌کرد)</span><span>${money(s.bal, 1)}</span></div></div>`;
+  if (c.partner) {
+    h += `<div class="card" style="border:2px solid var(--yellow)"><div class="ct"><b>شراکت</b><span class="badge y">سهم شریک ${faNum(s.share)}٪</span></div>
+      <div class="kv"><span>دریافتی‌ها</span><span>${money(s.inc)}</span></div>
+      <div class="kv"><span>خرج‌کردها</span><span>− ${money(s.spent)}</span></div>
+      <div class="kv total"><span>سود خالص</span><span>${money(s.profit, 1)}</span></div>
+      <div class="kv"><span>سهم شریک (${esc(fullName(c))})</span><span>${money(s.partnerShare, 1)}</span></div>
+      <div class="kv"><span>سهم شما</span><span>${money(s.myShare, 1)}</span></div>
+      ${s.cpaid ? `<div class="kv"><span>واریز شده به شریک</span><span>− ${money(s.cpaid)}</span></div>` : ''}
+      <div class="kv total"><span>${s.partnerDue >= 0 ? 'مانده سهم شریک (باید به او بدهید)' : 'بیشتر از سهمش واریز شده'}</span><span>${money(Math.abs(s.partnerDue), 1)}</span></div>
+      <div class="mut" style="margin-top:6px">سود = دریافتی‌ها − (واریز به شاگرد، نصاب و هزینه‌های مازاد). «واریز به حساب پیمانکار» از سهم شریک کم می‌شود.</div></div>`;
+  }
   h += `<div class="row" style="margin-bottom:12px"><button class="btn pri" style="flex:1" onclick="txForm(null,{contractorId:${c.id},type:'in'})">${ic('in')} ثبت دریافتی</button><button class="btn dark" style="flex:1" onclick="txForm(null,{contractorId:${c.id}})">${ic('out')} ثبت خرج‌کرد</button></div>`;
   const txs = s.txs.slice().sort(byDateDesc);
   const pg = pager(r, txs.length);

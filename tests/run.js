@@ -58,6 +58,84 @@ test('contract (کنترات) project and misc income are in the net', () => {
   assert.ok(t.els.main.innerHTML.includes('دریافتی متفرقه'));
 });
 
+test('worker wage change from a date reprices only matching days after it', () => {
+  const t = boot();
+  const r = t.run(`(() => {
+    const c = { id: nid(), name: 'ک' }; DB.cats.push(c);
+    const p = { id: nid(), catId: c.id, name: 'پ', address: '', type: 'mat', area: 100, price: 1000, laborPrice: 0, contract: 0, material: 0, created: '1405/08/01' };
+    DB.projects.push(p);
+    const w = { id: nid(), first: 'علی', last: '', address: '', phone: '', wage: 1000000, projectId: p.id, active: false, fillFrom: null };
+    DB.workers.push(w);
+    for (let d = 1; d <= 11; d++) DB.att[w.id + '|1405/08/' + String(d).padStart(2, '0')] = { p: p.id, s: 'p', w: 1000000 };
+    DB.att[w.id + '|1405/08/09'] = { p: p.id, s: 'h', w: 500000 };
+    DB.att[w.id + '|1405/08/10'] = { p: p.id, s: 'p', w: 1300000 }; // دستی
+    const n = changeWages(w, () => addWage(w, '1405/08/07', 1200000));
+    const back = sanitizeDB(JSON.parse(JSON.stringify(DB))).db;
+    const k = d => DB.att[w.id + '|1405/08/' + d].w;
+    const before = wageAt(w, '1405/08/06'), after = wageAt(w, '1405/08/20');
+    // حذف تغییر: برمی‌گردد
+    changeWages(w, () => { w.wages = w.wages.filter(x => x.from !== '1405/08/07'); });
+    return { n, before, after, wages: back.workers[0].wages.length, restored: k('08'), restoredH: k('09'), manual: k('10'), hist: (w.wages || []).length };
+  })()`);
+  assert.strictEqual(r.n, 4);            // 7, 8, 9(نیم‌روز), 11 — روز ۱۰ دستی بود
+  assert.strictEqual(r.before, 1000000);
+  assert.strictEqual(r.after, 1200000);
+  assert.strictEqual(r.wages, 2);
+  assert.strictEqual(r.restored, 1000000);
+  assert.strictEqual(r.restoredH, 500000);
+  assert.strictEqual(r.manual, 1300000);
+  assert.strictEqual(r.hist, 0);
+});
+
+test('worker wage change: values per day after the change', () => {
+  const t = boot();
+  const r = t.run(`(() => {
+    const p = { id: nid(), catId: 1, name: 'پ', type: 'labor', area: 10, laborPrice: 1 }; DB.cats.push({ id: 1, name: 'x' }); DB.projects.push(p);
+    const w = { id: nid(), first: 'a', last: '', wage: 100, projectId: p.id, active: false, fillFrom: null }; DB.workers.push(w);
+    for (const d of ['01', '06', '07', '11']) DB.att[w.id + '|1405/08/' + d] = { p: p.id, s: 'p', w: 100 };
+    changeWages(w, () => addWage(w, '1405/08/07', 150)); save();
+    return ['01', '06', '07', '11'].map(d => DB.att[w.id + '|1405/08/' + d].w).concat([workerStats(w).work]);
+  })()`);
+  eq(r, [100, 100, 150, 150, 500]);
+});
+
+test('project price change from a date and per-entry price', () => {
+  const t = boot();
+  const r = t.run(`(() => {
+    const c = { id: nid(), name: 'ک' }; DB.cats.push(c);
+    const p = { id: nid(), catId: c.id, name: 'پ', address: '', type: 'mat', area: 300, price: 1000, laborPrice: 0, contract: 0, material: 0, created: '1405/08/01' };
+    DB.projects.push(p);
+    const pe = (date, meters, rate) => DB.progress.push({ id: nid(), projectId: p.id, date, meters, rate: rate || 0, installerId: null, instMeters: 0, instRate: 0, note: '' });
+    pe('1405/08/02', 10); pe('1405/08/10', 20); pe('1405/08/12', 5, 3000);
+    addPrice(p, '1405/08/08', 2000);
+    save();
+    const a = agg(ALL, new Set([p.id]));
+    const g = [...progressByRate(p.id, '1405/08/01', '1405/08/30')];
+    const back = sanitizeDB(JSON.parse(JSON.stringify(DB))).db;
+    return { rev: a.revenue, g, prices: back.projects[0].prices.length, rate: back.progress[2].rate, cur: rateAt(p, '1405/09/01'), old: rateAt(p, '1405/08/07') };
+  })()`);
+  assert.strictEqual(r.rev, 10 * 1000 + 20 * 2000 + 5 * 3000);
+  eq(r.g, [[1000, 10], [2000, 20], [3000, 5]]);
+  assert.strictEqual(r.prices, 2);
+  assert.strictEqual(r.rate, 3000);
+  assert.strictEqual(r.cur, 2000);
+  assert.strictEqual(r.old, 1000);
+});
+
+test('contractor partnership splits profit; payment to contractor reduces partner share', () => {
+  const t = boot();
+  const r = t.run(`(() => {
+    const c = { id: nid(), first: 'رضا', last: '', phone: '', partner: true, share: 50 }; DB.contractors.push(c);
+    const tx = (type, amount) => DB.tx.push({ id: nid(), type, sub: '', amount, date: '1405/08/02', note: '', workerId: null, installerId: null, projectId: null, contractorId: c.id });
+    tx('in', 100); tx('wpay', 50); tx('extra', 30); tx('cpay', 4); save();
+    const s = contrStats(c);
+    stack = [{ name: 'contractor', id: c.id }]; render();
+    const back = sanitizeDB(JSON.parse(JSON.stringify(DB))).db;
+    return { profit: s.profit, ps: s.partnerShare, my: s.myShare, due: s.partnerDue, bal: s.bal, type: back.tx[3].type, partner: back.contractors[0].partner, html: document.getElementById('main').innerHTML.includes('سهم شما') };
+  })()`);
+  eq(r, { profit: 20, ps: 10, my: 10, due: 6, bal: 16, type: 'cpay', partner: true, html: true });
+});
+
 test('import: cats:[null] does not brick the app', () => {
   const t = boot();
   t.run(`applyBackup(parseBackup('{"v":1,"projects":[],"cats":[null]}'))`);
